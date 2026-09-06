@@ -96,7 +96,7 @@ async function main() {
     res.status(500).json({ message: "Internal Server Error" });
   });
 
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     const aiProvider = process.env["GEMINI_API_KEY"]
       ? `enabled (Google Gemini: ${process.env["GEMINI_MODEL"] || "gemini-2.5-flash"})`
       : process.env["OPENAI_API_KEY"]
