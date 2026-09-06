@@ -21,7 +21,7 @@ router.get("/", async (req: any, res: any) => {
               currency, created_at
        FROM cases ORDER BY created_at DESC`;
 
-    const params = orgId && orgId !== "sentinel-corp" ? [orgId] : [];
+    const params = orgId ? [orgId] : [];
     const result = await pool.query<Case>(query, params);
     const summaries: CaseSummary[] = result.rows.map((r) => ({
       id: r.id,
@@ -58,7 +58,7 @@ router.get("/:caseId", async (req: any, res: any) => {
                 WHERE (c.id::text = $1 OR c.case_number = $1)`;
     let params: any[] = [caseId];
 
-    if (orgId && orgId !== "sentinel-corp") {
+    if (orgId ) {
       query += ` AND c.org_id = $2`;
       params.push(orgId);
     }

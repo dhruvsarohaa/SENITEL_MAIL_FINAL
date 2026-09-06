@@ -228,13 +228,15 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
 
     // Step 5: Persist case to PostgreSQL
     await pool.query(
-      `INSERT INTO cases (id, case_number, subject, sender, recipients, threat_class, risk_score,
+
+      `INSERT INTO cases (id, org_id, case_number, subject, sender, recipients, threat_class, risk_score,
         severity, confidence, decision, assigned_action, decision_banner, vendor_id, vendor_name,
         amount_at_risk, currency, body_preview, evidence, timeline, relay_path,
         raw_eml, eml_sha256)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,$23)`,
       [
         kase.id,
+        req.tenant.id,
         kase.case_number,
         kase.subject,
         kase.sender,
