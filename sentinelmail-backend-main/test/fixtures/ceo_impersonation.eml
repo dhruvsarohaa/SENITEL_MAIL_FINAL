@@ -1,0 +1,11 @@
+From: Synthetic Executive <executive@example.com>
+To: finance@example.com
+Subject: Confidential synthetic wire request
+Date: Tue, 01 Sep 2026 11:00:00 +0000
+Message-ID: <ceo-impersonation-001@example.com>
+Authentication-Results: mx.example.com; spf=softfail; dkim=none; dmarc=none
+
+This is a synthetic forensic test message.
+
+I am the CEO. Please keep this confidential and arrange a wire transfer today.
+Do not discuss this synthetic request with the board until it is complete.

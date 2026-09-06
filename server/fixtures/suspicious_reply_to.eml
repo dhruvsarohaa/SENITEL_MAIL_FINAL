@@ -1,0 +1,11 @@
+From: Synthetic Invoices <invoices@example.com>
+To: ap@example.com
+Reply-To: redirect@different-example.com
+Return-Path: <bounce@different-example.com>
+Subject: Synthetic reply routing test
+Date: Tue, 01 Sep 2026 15:00:00 +0000
+Message-ID: <reply-to-001@example.com>
+Authentication-Results: mx.example.com; spf=pass; dkim=pass; dmarc=pass
+Received: from relay.different-example.com (relay.different-example.com [203.0.113.77]); Tue, 01 Sep 2026 15:00:00 +0000
+
+This is a synthetic sender-identity test. Please reply to this message with any questions.

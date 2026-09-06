@@ -1,0 +1,13 @@
+From: Operations Team <operations@example.com>
+To: ap@example.com
+Subject: Synthetic monthly operations update
+Date: Tue, 01 Sep 2026 09:00:00 +0000
+Message-ID: <benign-001@example.com>
+Authentication-Results: mx.example.com; spf=pass; dkim=pass; dmarc=pass
+
+Hello,
+
+This is a synthetic, routine operations update. No action or payment change is requested.
+
+Regards,
+Operations Team

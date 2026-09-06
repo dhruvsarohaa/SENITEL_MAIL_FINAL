@@ -1,0 +1,1 @@
+CREATE SEQUENCE case_number_seq START WITH 1042;

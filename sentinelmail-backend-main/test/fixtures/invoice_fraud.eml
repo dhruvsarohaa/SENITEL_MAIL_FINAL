@@ -1,0 +1,11 @@
+From: Synthetic Billing <billing@example.com>
+To: ap@example.com
+Subject: Synthetic invoice payment instructions updated
+Date: Tue, 01 Sep 2026 10:00:00 +0000
+Message-ID: <invoice-fraud-001@example.com>
+Authentication-Results: mx.example.com; spf=fail; dkim=fail; dmarc=fail
+
+This is a synthetic forensic test message.
+
+Please update the payment instructions for invoice TEST-8831 and send payment by wire transfer.
+The beneficiary has changed for this test invoice.

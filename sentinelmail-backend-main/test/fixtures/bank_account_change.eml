@@ -1,0 +1,13 @@
+From: Synthetic Supplier <supplier@example.com>
+To: ap@example.com
+Subject: Synthetic remittance account update
+Date: Tue, 01 Sep 2026 14:00:00 +0000
+Message-ID: <bank-change-001@example.com>
+Authentication-Results: mx.example.com; spf=pass; dkim=pass; dmarc=pass
+
+This is a synthetic financial-forensics test.
+
+Please update our bank account for future remittance payments.
+Beneficiary: Example Test Supplier Only
+Bank account: ZZ00TESTBANK00001284
+USD 12,500.00
