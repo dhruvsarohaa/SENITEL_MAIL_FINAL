@@ -16,7 +16,8 @@ import { tenantAuthMiddleware } from "./middleware/auth.js";
 import { initMongoDb, isMongoActive } from "./db/mongo.js";
 import { initDbPool, isPostgresActive } from "./db/connection.js";
 
-const PORT = Number(process.env["API_PORT"] ?? 3001);
+// const PORT = Number(process.env["API_PORT"] ?? 3001);
+const PORT = Number(process.env["PORT"] ?? process.env["API_PORT"] ?? 3001);
 
 async function main() {
   let dbDescription = "Zero-config high-performance MemoryStore";
@@ -56,9 +57,9 @@ async function main() {
     res.send(`
       <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; line-height: 1.6;">
         <h2>🛡️ SentinelMail API Backend is Running</h2>
-        <p>The forensic analysis API is active on port <strong>3001</strong>.</p>
+        <p>The forensic analysis API is active.</p>
         <p>👉 To view the SentinelMail UI, open the frontend at: <br/>
-           <a href="http://localhost:3000" style="font-size: 1.2rem; color: #2563eb; font-weight: bold;">http://localhost:3000</a>
+           <a href="SentinelMail frontend" style="font-size: 1.2rem; color: #2563eb; font-weight: bold;">http://localhost:3000</a>
         </p>
       </div>
     `);
