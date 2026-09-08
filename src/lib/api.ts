@@ -10,12 +10,15 @@ import { demoCampaigns, demoCaseSummaries, demoCases, demoVendors } from "./demo
 import { firebaseAuth } from "./firebase";
 
 const rawBaseUrl = (import.meta.env["VITE_API_BASE_URL"] as string | undefined)?.trim() ?? "";
-export const API_BASE_URL = rawBaseUrl
-  ? (rawBaseUrl.startsWith("http://") || rawBaseUrl.startsWith("https://")
-      ? rawBaseUrl
-      : `https://${rawBaseUrl}`
-    ).replace(/\/$/, "")
-  : "";
+// If VITE_API_BASE_URL is empty or an internal cluster name without dots (e.g. "sentinelmail-api"),
+// fall back to "" so requests use relative "/api/..." paths that Nitro proxies directly to the backend.
+export const API_BASE_URL =
+  rawBaseUrl && (rawBaseUrl.includes(".") || rawBaseUrl.includes("localhost") || rawBaseUrl.includes("127.0.0.1"))
+    ? (rawBaseUrl.startsWith("http://") || rawBaseUrl.startsWith("https://")
+        ? rawBaseUrl
+        : `https://${rawBaseUrl}`
+      ).replace(/\/$/, "")
+    : "";
 
 /** Demo fixtures are used ONLY when explicitly enabled with VITE_DEMO_MODE=true. */
 export const DEMO_MODE = String(import.meta.env["VITE_DEMO_MODE"] ?? "").toLowerCase() === "true";

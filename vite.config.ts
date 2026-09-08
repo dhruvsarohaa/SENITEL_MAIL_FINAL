@@ -38,7 +38,14 @@ export default defineConfig({
       },
       server: { entry: "server" },
     }),
-    nitro({ defaultPreset: process.env["NITRO_PRESET"] || "node-server" }),
+    nitro({
+      defaultPreset: process.env["NITRO_PRESET"] || "node-server",
+      routeRules: {
+        "/api/**": {
+          proxy: (process.env["INTERNAL_API_URL"] || "http://sentinelmail-api:10000/api/**").replace(/\/$/, ""),
+        },
+      },
+    }),
     react(),
   ],
   // @ts-expect-error Vitest configuration extension

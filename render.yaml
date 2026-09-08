@@ -58,6 +58,8 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: INTERNAL_API_URL
+        value: "http://sentinelmail-api:10000/api/**"
       - key: VITE_API_BASE_URL
         fromService:
           type: web
