@@ -9,19 +9,15 @@ const router = Router();
 /** GET /api/cases — List all case summaries, most recent first. */
 router.get("/", async (req: any, res: any) => {
   try {
-    const orgId = req.tenant?.id;
-    const query =
-      orgId && orgId !== "sentinel-corp"
-        ? `SELECT id, case_number, subject, sender, threat_class, risk_score, severity,
+    const orgId = req.tenant?.id || "00000000-0000-0000-0000-000000000001";
+    const query = `SELECT id, case_number, subject, sender, threat_class, risk_score, severity,
               decision, assigned_action, vendor_name AS vendor, amount_at_risk,
               currency, created_at
-       FROM cases WHERE org_id = $1 ORDER BY created_at DESC`
-        : `SELECT id, case_number, subject, sender, threat_class, risk_score, severity,
-              decision, assigned_action, vendor_name AS vendor, amount_at_risk,
-              currency, created_at
-       FROM cases ORDER BY created_at DESC`;
+       FROM cases
+       WHERE org_id = $1
+       ORDER BY created_at DESC`;
+    const params = [orgId];
 
-    const params = orgId ? [orgId] : [];
     const result = await pool.query<Case>(query, params);
     const summaries: CaseSummary[] = result.rows.map((r) => ({
       id: r.id,
@@ -47,22 +43,22 @@ router.get("/", async (req: any, res: any) => {
   }
 });
 
-/** GET /api/cases/:caseId — Full case detail. */
+/** GET /api/cases/:caseId — Full case detail (excluding heavy raw_eml binary). */
 router.get("/:caseId", async (req: any, res: any) => {
   try {
-    const orgId = req.tenant?.id;
+    const orgId = req.tenant?.id || "00000000-0000-0000-0000-000000000001";
     const { caseId } = req.params;
 
-    let query = `SELECT c.*, v.name AS vendor_name_joined
+    const query = `SELECT c.id, c.org_id, c.case_number, c.subject, c.sender, c.recipients, c.threat_class,
+                        c.risk_score, c.severity, c.confidence, c.decision, c.assigned_action,
+                        c.decision_banner, c.vendor_id, c.vendor_name, c.amount_at_risk, c.currency,
+                        c.body_preview, c.evidence, c.timeline, c.relay_path, c.campaign_id, c.campaign_graph,
+                        c.origin_assessment, c.domain_intelligence,
+                        c.created_at, c.updated_at, c.triage_minutes, v.name AS vendor_name_joined
                  FROM cases c LEFT JOIN vendors v ON c.vendor_id = v.id
-                WHERE (c.id::text = $1 OR c.case_number = $1)`;
-    let params: any[] = [caseId];
-
-    if (orgId ) {
-      query += ` AND c.org_id = $2`;
-      params.push(orgId);
-    }
-    query += ` LIMIT 1`;
+                WHERE (c.id::text = $1 OR c.case_number = $1) AND c.org_id = $2
+                LIMIT 1`;
+    const params = [caseId, orgId];
 
     const result = await pool.query(query, params);
 
@@ -100,6 +96,8 @@ router.get("/:caseId", async (req: any, res: any) => {
       evidence: row.evidence,
       timeline: row.timeline ?? [],
       relay_path: row.relay_path ?? [],
+      origin_assessment: row.origin_assessment ?? undefined,
+      domain_intelligence: row.domain_intelligence ?? undefined,
       campaign_id: row.campaign_id ?? undefined,
       campaign_graph: row.campaign_graph ?? undefined,
       actions: actionsResult.rows.map((a: any) => ({
@@ -117,16 +115,42 @@ router.get("/:caseId", async (req: any, res: any) => {
   }
 });
 
+/** GET /api/cases/:caseId/raw — Download raw RFC-822 email buffer. */
+router.get("/:caseId/raw", async (req: any, res: any) => {
+  try {
+    const orgId = req.tenant?.id || "00000000-0000-0000-0000-000000000001";
+    const { caseId } = req.params;
+
+    const query =
+      "SELECT case_number, raw_eml FROM cases WHERE (id::text = $1 OR case_number = $1) AND org_id = $2";
+    const result = await pool.query(query, [caseId, orgId]);
+
+    if (result.rows.length === 0 || !result.rows[0].raw_eml) {
+      return res.status(404).json({ message: "Raw EML payload not available." });
+    }
+
+    const row = result.rows[0];
+    res.setHeader("Content-Type", "message/rfc822");
+    res.setHeader("Content-Disposition", `attachment; filename="${row.case_number}.eml"`);
+    res.send(row.raw_eml);
+  } catch (err) {
+    console.error("Failed to retrieve raw EML:", err);
+    res.status(500).json({ message: "Failed to download raw EML." });
+  }
+});
+
 /** POST /api/cases/:caseId/action — Record an analyst action. */
-router.post("/:caseId/action", async (req, res) => {
+router.post("/:caseId/action", async (req: any, res: any) => {
   try {
     const { caseId } = req.params;
     const action = req.body as AnalystAction;
 
+    const orgId = req.tenant?.id || "00000000-0000-0000-0000-000000000001";
+    const query = "SELECT * FROM cases WHERE (id::text = $1 OR case_number = $1) AND org_id = $2";
+    const params = [caseId, orgId];
+
     // Find the case
-    const caseResult = await pool.query("SELECT * FROM cases WHERE id::text = $1 OR case_number = $1", [
-      caseId,
-    ]);
+    const caseResult = await pool.query(query, params);
     if (caseResult.rows.length === 0) {
       return res.status(404).json({ message: "Case not found." });
     }
@@ -152,8 +176,8 @@ router.post("/:caseId/action", async (req, res) => {
     const triageMinutes = Math.max(1, Math.round((Date.now() - createdAtTime) / 60000));
 
     await pool.query(
-      "UPDATE cases SET decision = $1, triage_minutes = $2, updated_at = now() WHERE id = $3",
-      [newDecision, triageMinutes, row.id],
+      "UPDATE cases SET decision = $1, triage_minutes = $2, updated_at = now() WHERE id = $3 AND org_id = $4",
+      [newDecision, triageMinutes, row.id, orgId],
     );
 
     // Send containment alert for hold_payment and escalate actions
@@ -181,12 +205,13 @@ router.post("/:caseId/action", async (req, res) => {
 });
 
 /** GET /api/cases/:caseId/report — Generate a forensic PDF or plain-text report. */
-router.get("/:caseId/report", async (req, res) => {
+router.get("/:caseId/report", async (req: any, res: any) => {
   try {
     const { caseId } = req.params;
-    const result = await pool.query("SELECT * FROM cases WHERE id::text = $1 OR case_number = $1", [
-      caseId,
-    ]);
+    const orgId = req.tenant?.id || "00000000-0000-0000-0000-000000000001";
+    const query = "SELECT * FROM cases WHERE (id::text = $1 OR case_number = $1) AND org_id = $2";
+    const params = [caseId, orgId];
+    const result = await pool.query(query, params);
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Case not found." });
     }

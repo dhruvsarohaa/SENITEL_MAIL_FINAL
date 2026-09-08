@@ -65,9 +65,14 @@ export async function initDbPool(): Promise<boolean> {
     console.log("✅ Connected to PostgreSQL database.");
     return true;
   } catch (err) {
-    console.warn(
-      `⚠️ PostgreSQL is not reachable at ${connStr.replace(/:[^:@]+@/, ":***@")} (${err instanceof Error ? err.message : String(err)})`,
-    );
+    console.warn("\n" + "=".repeat(72));
+    console.warn("  ⚠️   CRITICAL DATABASE WARNING: POSTGRESQL UNREACHABLE");
+    console.warn("  ------------------------------------------------------------------------");
+    console.warn(`  Target: ${connStr.replace(/:[^:@]+@/, ":***@")}`);
+    console.warn(`  Reason: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn("  ACTION: Falling back to EPHEMERAL in-memory MemoryStore.");
+    console.warn("  ⚠️   WARNING: DATA WILL NOT PERSIST ACROSS PROCESS RESTARTS!");
+    console.warn("=".repeat(72) + "\n");
     isPostgresActive = false;
     realPool = null;
     return false;
@@ -406,12 +411,12 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
   // Update case decision, triage_minutes, or campaign re-fusion
   if (sql.startsWith("UPDATE cases SET")) {
     if (params) {
-      const id = params[params.length - 1];
-      const kase =
-        memoryStore.cases.get(id) ||
-        Array.from(memoryStore.cases.values()).find((c) => c.case_number === id);
-      if (kase) {
-        if (sql.includes("campaign_id = $1, campaign_graph = $2")) {
+      if (sql.includes("campaign_id = $1, campaign_graph = $2")) {
+        const id = params[params.length - 1];
+        const kase =
+          memoryStore.cases.get(id) ||
+          Array.from(memoryStore.cases.values()).find((c) => c.case_number === id);
+        if (kase) {
           (kase as any).campaign_id = params[0];
           (kase as any).campaign_graph =
             typeof params[1] === "string" ? JSON.parse(params[1]) : params[1];
@@ -422,7 +427,14 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
             (kase as any).assigned_action = params[5];
             (kase as any).decision_banner = params[6];
           }
-        } else if (sql.includes("decision = $1")) {
+        }
+      } else if (sql.includes("decision = $1")) {
+        const id = params.length >= 4 ? params[2] : params[params.length - 1];
+        const orgId = sql.includes("org_id = $4") ? params[3] : undefined;
+        const kase =
+          memoryStore.cases.get(id) ||
+          Array.from(memoryStore.cases.values()).find((c) => c.case_number === id);
+        if (kase && (!orgId || (kase as any).org_id === orgId)) {
           if (params[0]) kase.decision = params[0];
           if (typeof params[1] === "number") kase.triage_minutes = params[1];
         }

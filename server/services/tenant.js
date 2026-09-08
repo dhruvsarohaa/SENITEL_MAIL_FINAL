@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import pool from "../db/connection.js";
+import pool, { isPostgresActive } from "../db/connection.js";
 
 export const DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -42,7 +42,7 @@ export function hashKey(rawKey) {
 }
 
 /** Generate a new cryptographically secure API key. */
-export function generateApiKey(orgId, name, role = "admin") {
+export async function generateApiKey(orgId, name, role = "admin") {
   const randomBytes = crypto.randomBytes(24).toString("hex");
   const rawKey = `sm_live_${randomBytes}`;
   const prefix = rawKey.slice(0, 14);
@@ -60,33 +60,43 @@ export function generateApiKey(orgId, name, role = "admin") {
     last_used: null,
   };
 
+  if (isPostgresActive) {
+    await pool.query(
+      "INSERT INTO api_keys (id, org_id, name, prefix, key_hash, role) VALUES ($1, $2, $3, $4, $5, $6)",
+      [record.id, record.org_id, record.name, record.prefix, record.key_hash, record.role],
+    );
+    return { rawKey, ...record };
+  }
+
   memApiKeys.set(keyHash, record);
   return { rawKey, ...record };
 }
 
-/** Seed a default dev/testing API key if none exists. */
-const defaultKeyHash = hashKey("sm_live_default_sentinel_corp_key_12345");
-memApiKeys.set(defaultKeyHash, {
-  id: "00000000-0000-0000-0000-000000000003",
-  org_id: DEFAULT_ORG_ID,
-  name: "Default Admin Key",
-  prefix: "sm_live_defaul",
-  key_hash: defaultKeyHash,
-  role: "admin",
-  created_at: new Date().toISOString(),
-  last_used: null,
-});
+/** Seed default dev/testing API key only in non-production environments. */
+const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+if (isDev) {
+  const defaultKeyHash = hashKey("sm_live_default_sentinel_corp_key_12345");
+  memApiKeys.set(defaultKeyHash, {
+    id: "00000000-0000-0000-0000-000000000003",
+    org_id: DEFAULT_ORG_ID,
+    name: "Default Admin Key",
+    prefix: "sm_live_defaul",
+    key_hash: defaultKeyHash,
+    role: "admin",
+    created_at: new Date().toISOString(),
+    last_used: null,
+  });
+  console.warn("⚠️  [DEV ONLY] Default admin API key (sm_live_default_sentinel_corp_key_12345) seeded in memory. NEVER use in production!");
+}
 
 /** Retrieve organization by ID or slug. */
 export async function getOrganization(orgIdOrSlug) {
-  try {
+  if (isPostgresActive) {
     const res = await pool.query(
       "SELECT id, name, slug, plan, settings, created_at FROM organizations WHERE id::text = $1 OR slug = $1",
       [orgIdOrSlug],
     );
-    if (res.rows && res.rows[0]) return res.rows[0];
-  } catch {
-    // Fall back to in-memory store
+    return res.rows && res.rows[0] ? res.rows[0] : null;
   }
 
   for (const org of memOrgs.values()) {
@@ -107,13 +117,12 @@ export async function createOrganization({ name, slug, plan = "enterprise" }) {
     created_at: new Date().toISOString(),
   };
 
-  try {
+  if (isPostgresActive) {
     await pool.query(
       "INSERT INTO organizations (id, name, slug, plan, settings) VALUES ($1, $2, $3, $4, $5)",
       [org.id, org.name, org.slug, org.plan, JSON.stringify(org.settings)],
     );
-  } catch {
-    // Fallback in memory
+    return org;
   }
 
   memOrgs.set(id, org);
@@ -125,7 +134,7 @@ export async function validateApiKey(rawKey) {
   if (!rawKey || !rawKey.startsWith("sm_live_")) return null;
   const keyHash = hashKey(rawKey);
 
-  try {
+  if (isPostgresActive) {
     const res = await pool.query(
       `SELECT k.id, k.org_id, k.name, k.role, o.name AS org_name, o.slug AS org_slug
        FROM api_keys k
@@ -142,8 +151,20 @@ export async function validateApiKey(rawKey) {
         role: res.rows[0].role,
       };
     }
-  } catch {
-    // Fallback in memory
+    // Check ephemeral dev key if in development mode
+    if (process.env.NODE_ENV === "development") {
+      const devKey = memApiKeys.get(keyHash);
+      if (devKey) {
+        return {
+          keyId: devKey.id,
+          orgId: devKey.org_id,
+          orgName: "Sentinel Corporation",
+          orgSlug: "sentinel-corp",
+          role: devKey.role,
+        };
+      }
+    }
+    return null;
   }
 
   const inMem = memApiKeys.get(keyHash);
@@ -162,6 +183,14 @@ export async function validateApiKey(rawKey) {
 
 /** List API keys for an organization. */
 export async function listApiKeys(orgId) {
+  if (isPostgresActive) {
+    const res = await pool.query(
+      "SELECT id, org_id, name, prefix, role, created_at, last_used FROM api_keys WHERE org_id = $1",
+      [orgId],
+    );
+    return res.rows ?? [];
+  }
+
   const keys = Array.from(memApiKeys.values()).filter((k) => k.org_id === orgId);
   return keys.map(({ key_hash, ...rest }) => rest);
 }
@@ -177,11 +206,28 @@ export async function addOrganizationUser({ orgId, email, name, role = "analyst"
     role,
     created_at: new Date().toISOString(),
   };
+
+  if (isPostgresActive) {
+    await pool.query(
+      "INSERT INTO users (id, org_id, email, name, role) VALUES ($1, $2, $3, $4, $5)",
+      [user.id, user.org_id, user.email, user.name, user.role],
+    );
+    return user;
+  }
+
   memUsers.set(id, user);
   return user;
 }
 
 /** List users in an organization. */
 export async function listOrganizationUsers(orgId) {
+  if (isPostgresActive) {
+    const res = await pool.query(
+      "SELECT id, org_id, email, name, role, created_at FROM users WHERE org_id = $1",
+      [orgId],
+    );
+    return res.rows ?? [];
+  }
+
   return Array.from(memUsers.values()).filter((u) => u.org_id === orgId);
 }

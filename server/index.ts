@@ -6,11 +6,11 @@ import analyzeRouter from "./routes/analyze.js";
 import casesRouter from "./routes/cases.js";
 import vendorsRouter from "./routes/vendors.js";
 import campaignsRouter from "./routes/campaigns.js";
-// @ts-ignore - JavaScript route modules for Enterprise Phase 1 & 2
+
 import tenantsRouter from "./routes/tenants.js";
-// @ts-ignore
+
 import ingestRouter from "./routes/ingest.js";
-// @ts-ignore
+
 import { tenantAuthMiddleware } from "./middleware/auth.js";
 
 import { initMongoDb, isMongoActive } from "./db/mongo.js";
@@ -22,15 +22,31 @@ const PORT = Number(process.env["PORT"] ?? process.env["API_PORT"] ?? 3001);
 async function main() {
   let dbDescription = "Zero-config high-performance MemoryStore";
 
-  // 1. Try MongoDB connection if configured
-  const mongoConnected = await initMongoDb();
-  if (mongoConnected) {
-    const rawUri = process.env["MONGODB_URI"] || process.env["MONGODB_URL"] || "";
-    dbDescription = `MongoDB (${rawUri.replace(/:[^:@]+@/, ":***@")})`;
-  } else {
-    // 2. Try PostgreSQL connection if configured
+  const isProd = process.env.NODE_ENV === "production";
+  const hasPgConfig = Boolean(process.env["DATABASE_URL"]);
+  const hasMongoConfig = Boolean(process.env["MONGODB_URI"] || process.env["MONGODB_URL"]);
+
+  if (hasPgConfig) {
+    // Primary database: PostgreSQL
     const pgConnected = await initDbPool();
-    if (pgConnected) {
+    if (!pgConnected) {
+      const maskedUrl = process.env["DATABASE_URL"]?.replace(/:[^:@]+@/, ":***@");
+      if (isProd) {
+        console.error(
+          `FATAL: Configured primary PostgreSQL database at ${maskedUrl} is unreachable. Aborting startup.`,
+        );
+        process.exit(1);
+      } else {
+        console.warn("\n" + "=".repeat(72));
+        console.warn("  ⚠️   WARNING: RUNNING ON EPHEMERAL IN-MEMORY STORAGE (MemoryStore)");
+        console.warn("  ------------------------------------------------------------------------");
+        console.warn(`  PostgreSQL database at ${maskedUrl} is unreachable.`);
+        console.warn("  The server has fallen back to zero-config in-memory storage.");
+        console.warn("  ⚠️   DEMO DATA WILL NOT PERSIST ACROSS SERVER RESTARTS!");
+        console.warn("=".repeat(72) + "\n");
+        dbDescription = "⚠️  EPHEMERAL IN-MEMORY STORE (MemoryStore) — NOT PERSISTENT";
+      }
+    } else {
       dbDescription = `PostgreSQL (${process.env["DATABASE_URL"]?.replace(/:[^:@]+@/, ":***@")})`;
       console.log("Running database migrations...");
       try {
@@ -38,18 +54,60 @@ async function main() {
         console.log("Migrations complete.");
       } catch (migErr) {
         console.error("Migration error:", migErr);
+        console.error(
+          "FATAL: Database migrations failed. Aborting startup to prevent schema mismatches.",
+        );
+        process.exit(1);
+      }
+    }
+  } else if (hasMongoConfig) {
+    // Optional secondary database: MongoDB
+    const mongoConnected = await initMongoDb();
+    const rawUri = (process.env["MONGODB_URI"] || process.env["MONGODB_URL"] || "").replace(
+      /:[^:@]+@/,
+      ":***@",
+    );
+    if (!mongoConnected) {
+      if (isProd) {
+        console.error(
+          `FATAL: Configured MongoDB database at ${rawUri} is unreachable. Aborting startup.`,
+        );
+        process.exit(1);
+      } else {
+        console.warn(
+          `⚠️ [DEV] Configured MongoDB database at ${rawUri} is unreachable. Operating with zero-config MemoryStore.`,
+        );
       }
     } else {
-      console.log(
-        "Running with built-in zero-config database storage (no external database required).",
-      );
+      dbDescription = `MongoDB (${rawUri})`;
     }
+  } else {
+    console.log(
+      "Running with built-in zero-config database storage (no external database required).",
+    );
   }
 
   const app = express();
 
   // Middleware
-  app.use(cors({ origin: true, credentials: true }));
+  const allowedOrigins = (
+    process.env.CORS_ORIGIN || "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
+  )
+    .split(",")
+    .map((o) => o.trim());
+
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error("Not allowed by CORS"));
+        }
+      },
+      credentials: true,
+    }),
+  );
   app.use(express.json({ limit: "10mb" }));
 
   // Root health / info
@@ -59,7 +117,7 @@ async function main() {
         <h2>🛡️ SentinelMail API Backend is Running</h2>
         <p>The forensic analysis API is active.</p>
         <p>👉 To view the SentinelMail UI, open the frontend at: <br/>
-           <a href="SentinelMail frontend" style="font-size: 1.2rem; color: #2563eb; font-weight: bold;">http://localhost:3000</a>
+           <a href="http://localhost:3000" style="font-size: 1.2rem; color: #2563eb; font-weight: bold;">http://localhost:3000</a>
         </p>
       </div>
     `);
@@ -92,6 +150,12 @@ async function main() {
 
   // Global Error Handler
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err.name === "MulterError" || (err && err.code === "LIMIT_FILE_SIZE")) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({ message: "File exceeds 25 MB size limit." });
+      }
+      return res.status(400).json({ message: err.message || "File upload error." });
+    }
     console.error("Unhandled API Error:", err);
     res.status(500).json({ message: "Internal Server Error" });
   });
