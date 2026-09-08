@@ -42,7 +42,10 @@ export default defineConfig({
       defaultPreset: process.env["NITRO_PRESET"] || "node-server",
       routeRules: {
         "/api/**": {
-          proxy: (process.env["INTERNAL_API_URL"] || "http://sentinelmail-api:10000/api/**").replace(/\/$/, ""),
+          // Use INTERNAL_API_URL if provided, else construct from VITE_API_BASE_URL (Render), else fallback to localhost
+          proxy: process.env["INTERNAL_API_URL"] || (process.env["VITE_API_BASE_URL"] 
+            ? `https://${process.env["VITE_API_BASE_URL"]}/api/**` 
+            : "http://localhost:3001/api/**"),
         },
       },
     }),
