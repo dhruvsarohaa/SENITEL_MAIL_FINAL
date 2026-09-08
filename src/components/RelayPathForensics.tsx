@@ -8,7 +8,9 @@ import {
   ChevronUp,
   Clock,
   Copy,
+  Globe,
   Lock,
+  Search,
   Server,
   ShieldAlert,
   ShieldCheck,
@@ -168,11 +170,11 @@ export function RelayPathForensics({ kase }: RelayPathForensicsProps) {
             </span>
             <span className="font-mono text-[10px] font-medium text-muted-foreground">
               {originHop?.country
-                ? `${COUNTRY_FLAGS[originHop.country] || "🌐"} ${originHop.country}`
+                ? `${COUNTRY_FLAGS[originHop.countryCode || originHop.country || ""] || "🌐"} ${originHop.country}`
                 : "Origin"}{" "}
               →{" "}
               {perimeterHop?.country
-                ? `${COUNTRY_FLAGS[perimeterHop.country] || "🏢"} Enterprise Gateway`
+                ? `${COUNTRY_FLAGS[perimeterHop.countryCode || perimeterHop.country || ""] || "🏢"} Enterprise Gateway`
                 : "Internal"}
             </span>
           </div>
@@ -210,7 +212,7 @@ export function RelayPathForensics({ kase }: RelayPathForensicsProps) {
                   </span>
                   <span className="mt-1 text-[10px] font-mono font-bold text-foreground truncate max-w-[70px]">
                     {hop.country
-                      ? `${COUNTRY_FLAGS[hop.country] || ""} ${hop.country}`
+                      ? `${COUNTRY_FLAGS[hop.countryCode || hop.country || ""] || ""} ${hop.country}`
                       : `Hop ${hop.index}`}
                   </span>
                   <span
@@ -244,6 +246,206 @@ export function RelayPathForensics({ kase }: RelayPathForensicsProps) {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+
+        {kase.origin_assessment && (
+          <div className="mt-4 rounded-xl border border-border bg-card p-3 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground pb-2 border-b border-border">
+              <span className="flex items-center gap-1 font-semibold text-foreground uppercase tracking-wider text-[10px]">
+                <Search className="size-3 text-primary" />
+                Probable Infrastructure Origin
+              </span>
+              <span className="font-mono text-[10px] font-bold text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                {kase.origin_assessment.confidence}% CONFIDENCE
+              </span>
+            </div>
+            <div className="mt-3">
+              <p className="text-sm font-bold text-foreground">
+                {kase.origin_assessment.assessment}
+              </p>
+              <ul className="mt-2 space-y-1">
+                {kase.origin_assessment.reasons.map((reason, idx) => (
+                  <li
+                    key={idx}
+                    className="flex items-start gap-1.5 text-[11px] text-muted-foreground"
+                  >
+                    <Check className="size-3 text-safe shrink-0 mt-0.5" />
+                    <span>{reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {kase.domain_intelligence && kase.domain_intelligence.length > 0 && (
+          <div className="mt-4 rounded-xl border border-border bg-card p-3 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground pb-2 border-b border-border">
+              <span className="flex items-center gap-1 font-semibold text-foreground uppercase tracking-wider text-[10px]">
+                <Globe className="size-3 text-primary" />
+                Domain Intelligence
+              </span>
+              <span className="font-mono text-[10px] font-bold text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                {kase.domain_intelligence.length} DOMAIN
+                {kase.domain_intelligence.length !== 1 && "S"} ENRICHED
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-3">
+              {kase.domain_intelligence.map((di, idx) => (
+                <div key={idx} className="bg-secondary/40 rounded-lg p-2.5 border border-border/50">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 pb-2 mb-2">
+                    <span className="text-sm font-bold text-foreground font-mono">{di.domain}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">
+                      {di.age_days ? `${di.age_days} DAYS OLD` : "AGE UNAVAILABLE"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                    <div>
+                      <span className="text-muted-foreground block text-[9px] uppercase tracking-wider mb-0.5">
+                        Registrar
+                      </span>
+                      <span
+                        className="font-medium text-foreground truncate block"
+                        title={di.registrar || "Unavailable"}
+                      >
+                        {di.registrar || "Unavailable"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-[9px] uppercase tracking-wider mb-0.5">
+                        Created
+                      </span>
+                      <span className="font-mono text-foreground">
+                        {di.creation_date ? di.creation_date.substring(0, 10) : "Unavailable"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-[9px] uppercase tracking-wider mb-0.5">
+                        Expires
+                      </span>
+                      <span className="font-mono text-foreground">
+                        {di.expiration_date ? di.expiration_date.substring(0, 10) : "Unavailable"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-[9px] uppercase tracking-wider mb-0.5">
+                        MX Records
+                      </span>
+                      <span
+                        className="font-mono text-foreground truncate block"
+                        title={di.mx_records.join(", ")}
+                      >
+                        {di.mx_records.length > 0
+                          ? di.mx_records[0] +
+                            (di.mx_records.length > 1 ? ` (+${di.mx_records.length - 1})` : "")
+                          : "Unavailable"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-border/50 grid grid-cols-3 gap-2 text-[10px] font-mono">
+                    <div className="truncate" title={di.a_records.join(", ")}>
+                      <span className="text-muted-foreground mr-1">A:</span>
+                      {di.a_records[0] || "None"}
+                    </div>
+                    <div className="truncate" title={di.aaaa_records.join(", ")}>
+                      <span className="text-muted-foreground mr-1">AAAA:</span>
+                      {di.aaaa_records[0] || "None"}
+                    </div>
+                    <div className="truncate" title={di.ns_records.join(", ")}>
+                      <span className="text-muted-foreground mr-1">NS:</span>
+                      {di.ns_records[0] || "None"}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* GEOGRAPHIC INTELLIGENCE STRIP */}
+        <div className="mt-4 rounded-xl border border-border bg-card p-3 shadow-2xs">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground pb-2 border-b border-border">
+            <span className="flex items-center gap-1 font-semibold text-foreground uppercase tracking-wider text-[10px]">
+              <Globe className="size-3 text-primary" />
+              Probable Infrastructure Location
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-col gap-4">
+            {/* Visual Sequence */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              {hopsWithMetrics.map((hop, i) => (
+                <div key={`geo-seq-${hop.index}`} className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-secondary/50 p-2 min-w-[100px] text-center">
+                    <span className="text-[10px] font-bold text-foreground">Hop {hop.index}</span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-[120px]">
+                      {hop.country
+                        ? `${COUNTRY_FLAGS[hop.countryCode || hop.country || ""] || "🌐"} ${hop.country}`
+                        : "Unavailable"}
+                    </span>
+                    <span className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                      {hop.asn || "Unavailable"}
+                    </span>
+                  </div>
+                  {i < hopsWithMetrics.length - 1 && (
+                    <ArrowRight className="size-3 text-muted-foreground shrink-0" />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Grid of Public Hops Details */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {hopsWithMetrics
+                .filter(
+                  (h) =>
+                    h.ip !== "—" &&
+                    !h.ip.startsWith("192.168.") &&
+                    !h.ip.startsWith("10.") &&
+                    !h.ip.startsWith("127."),
+                )
+                .map((hop) => (
+                  <div
+                    key={`geo-det-${hop.index}`}
+                    className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/20 p-3 text-[11px]"
+                  >
+                    <div className="font-bold text-foreground pb-1 border-b border-border">
+                      Hop {hop.index} Infrastructure
+                    </div>
+                    <div className="grid grid-cols-[80px_1fr] gap-x-2 gap-y-1.5 mt-1">
+                      <span className="text-muted-foreground font-medium">IP</span>
+                      <span className="font-mono text-foreground truncate">{hop.ip}</span>
+
+                      <span className="text-muted-foreground font-medium">Country</span>
+                      <span className="text-foreground truncate">
+                        {hop.country || "Unavailable"}
+                      </span>
+
+                      <span className="text-muted-foreground font-medium">Country Code</span>
+                      <span className="text-foreground truncate">
+                        {hop.countryCode || "Unavailable"}
+                      </span>
+
+                      <span className="text-muted-foreground font-medium">ASN</span>
+                      <span className="font-mono text-foreground truncate">
+                        {hop.asn || "Unavailable"}
+                      </span>
+
+                      <span className="text-muted-foreground font-medium">Organization</span>
+                      <span
+                        className="text-foreground truncate"
+                        title={hop.organization || "Unavailable"}
+                      >
+                        {hop.organization || "Unavailable"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+            </div>
           </div>
         </div>
       </header>
@@ -296,7 +498,9 @@ export function RelayPathForensics({ kase }: RelayPathForensicsProps) {
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="text-base leading-none">
-                          {hop.country ? COUNTRY_FLAGS[hop.country] || "🌐" : "🌐"}
+                          {hop.country
+                            ? COUNTRY_FLAGS[hop.countryCode || hop.country || ""] || "🌐"
+                            : "🌐"}
                         </span>
                         <p
                           className={cn(
@@ -374,7 +578,7 @@ export function RelayPathForensics({ kase }: RelayPathForensicsProps) {
                     {/* COUNTRY BADGE */}
                     {hop.country && (
                       <span className="rounded-lg border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground font-medium">
-                        {COUNTRY_FLAGS[hop.country] || "🌐"} {hop.country}
+                        {COUNTRY_FLAGS[hop.countryCode || hop.country || ""] || "🌐"} {hop.country}
                       </span>
                     )}
 
