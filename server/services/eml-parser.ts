@@ -1,13 +1,19 @@
 import crypto from "node:crypto";
+import { calculateShouldHold } from "./scoring.js";
 import type {
   AuthResult,
   Case,
   EvidenceSignal,
+  OriginAssessment,
   RelayHop,
   Severity,
   ThreatClass,
   VendorProfile,
+  DomainIntelligence,
 } from "../types.js";
+
+import { enrichIp } from "./ip-intelligence.js";
+import { enrichDomain } from "./domain-intelligence.js";
 
 export type Headers = Map<string, string[]>;
 
@@ -74,7 +80,7 @@ function mimeParameter(value: string, parameter: string) {
     ?.trim();
 }
 
-function decodeQuotedPrintable(source: string) {
+function decodeQuotedPrintableBytes(source: string): Buffer {
   const withoutSoftBreaks = source.replace(/=\r?\n/g, "");
   const bytes: number[] = [];
   for (let index = 0; index < withoutSoftBreaks.length; index += 1) {
@@ -86,7 +92,11 @@ function decodeQuotedPrintable(source: string) {
       bytes.push(withoutSoftBreaks.charCodeAt(index) & 0xff);
     }
   }
-  return Buffer.from(bytes).toString("utf-8");
+  return Buffer.from(bytes);
+}
+
+function decodeQuotedPrintable(source: string): string {
+  return decodeQuotedPrintableBytes(source).toString("utf-8");
 }
 
 function decodedBytes(source: string, encoding: string): Buffer {
@@ -94,7 +104,7 @@ function decodedBytes(source: string, encoding: string): Buffer {
     return Buffer.from(source.replace(/\s/g, ""), "base64");
   }
   if (/quoted-printable/i.test(encoding)) {
-    return Buffer.from(decodeQuotedPrintable(source), "utf-8");
+    return decodeQuotedPrintableBytes(source);
   }
   return Buffer.from(source, "utf-8");
 }
@@ -112,7 +122,12 @@ function isDangerousAttachment(filename: string, mimeType: string) {
 
 async function parseMime(
   source: string,
-  result: { text: string[]; attachments: Attachment[] },
+  result: {
+    text: string[];
+    plainText: string[];
+    htmlText: string[];
+    attachments: Attachment[];
+  },
 ): Promise<void> {
   const { headers: rawHeaders, body } = splitMessage(source);
   const headers = parseHeaders(rawHeaders);
@@ -145,13 +160,15 @@ async function parseMime(
     });
     return;
   }
-  if (/^text\/(?:plain|html)/i.test(contentType)) {
+  if (/^text\/plain/i.test(contentType)) {
+    result.plainText.push(bytes.toString("utf-8"));
+  } else if (/^text\/html/i.test(contentType)) {
     const content = bytes.toString("utf-8");
-    result.text.push(
-      /^text\/html/i.test(contentType)
-        ? content.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<[^>]*>/g, " ")
-        : content,
+    result.htmlText.push(
+      content.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<[^>]*>/g, " "),
     );
+  } else if (/^text\//i.test(contentType)) {
+    result.text.push(bytes.toString("utf-8"));
   }
 }
 
@@ -167,8 +184,8 @@ function auth(headers: Headers, method: "spf" | "dkim" | "dmarc") {
   return result === "pass" || result === "fail" ? result : "none";
 }
 
-function relays(headers: Headers): RelayHop[] {
-  return all(headers, "received")
+async function relays(headers: Headers): Promise<RelayHop[]> {
+  const hops = all(headers, "received")
     .slice(0, 8)
     .map((entry, index) => {
       const receivedAt = entry.split(";").at(-1)?.trim();
@@ -183,6 +200,17 @@ function relays(headers: Headers): RelayHop[] {
         ...(timestamp ? { timestamp } : {}),
       };
     });
+
+  for (const hop of hops) {
+    if (hop.ip !== "—") {
+      const intelligence = await enrichIp(hop.ip);
+      if (intelligence) {
+        Object.assign(hop, intelligence);
+      }
+    }
+  }
+
+  return hops;
 }
 
 export function classifyRules(
@@ -242,11 +270,112 @@ function financial(text: string) {
     paymentChange,
     accountLast4: account.length >= 4 ? account.slice(-4) : undefined,
     beneficiary: text
-      .match(/\bbeneficiary\s*[:\-]\s*([^\n]{2,80})/i)?.[1]
+      .match(/\bbeneficiary\s*[:-]\s*([^\n]{2,80})/i)?.[1]
       ?.split(/[.\r\n]/, 1)[0]
       ?.trim(),
     amount: amount ? Number(amount) : undefined,
     currency: currencyCode,
+  };
+}
+
+function assessOrigin(
+  authResults: AuthResult,
+  from: string,
+  replyTo: string,
+  returnPath: string,
+  domainMatches: boolean,
+  relayPath: RelayHop[],
+  threatClass: ThreatClass,
+  hasPaymentChange: boolean,
+  attachments: Attachment[],
+): OriginAssessment {
+  const reasons: string[] = [];
+  const hasDmarcFail = authResults.dmarc === "fail";
+  const hasAuthFail =
+    authResults.spf === "fail" || authResults.dkim === "fail" || authResults.spf === "softfail";
+  const replyToMismatch = Boolean(replyTo && replyTo !== from);
+  const returnPathMismatch = Boolean(
+    returnPath &&
+    returnPath !== from &&
+    from.length > 0 &&
+    returnPath.length > 0 &&
+    domain(returnPath) !== domain(from),
+  );
+
+  // 1. Spoofed Domain
+  if ((hasDmarcFail && !domainMatches) || (returnPathMismatch && hasAuthFail)) {
+    if (hasDmarcFail) reasons.push("DMARC authentication failure");
+    if (hasAuthFail) reasons.push("SPF/DKIM authentication failure");
+    if (returnPathMismatch) reasons.push("From vs Return-Path domain mismatch");
+    if (!domainMatches) reasons.push("Suspicious From-domain alignment");
+
+    return {
+      assessment: "Spoofed Domain",
+      confidence: reasons.length >= 3 ? 92 : 82,
+      reasons,
+    };
+  }
+
+  // 2. Likely Anonymized Infrastructure
+  const anonymizedHops = relayPath.filter((h) => h.isVpn || h.isTor || h.isProxy);
+  if (anonymizedHops.length > 0) {
+    if (anonymizedHops.some((h) => h.isTor)) reasons.push("Email routed through TOR network");
+    if (anonymizedHops.some((h) => h.isVpn))
+      reasons.push("Email routed through known VPN exit node");
+    if (anonymizedHops.some((h) => h.isProxy))
+      reasons.push("Email routed through known proxy infrastructure");
+
+    return {
+      assessment: "Likely Anonymized Infrastructure",
+      confidence: reasons.length > 1 ? 95 : 85,
+      reasons,
+    };
+  }
+
+  // 3. Likely Compromised Account
+  const isAuthPass = authResults.spf === "pass" && authResults.dkim === "pass";
+  if (
+    isAuthPass &&
+    domainMatches &&
+    (hasPaymentChange || threatClass !== "benign" || replyToMismatch)
+  ) {
+    reasons.push("SPF/DKIM/DMARC authentication passes for trusted vendor domain");
+    if (hasPaymentChange) reasons.push("High-risk BEC/payment-change behavior detected");
+    if (threatClass !== "benign") reasons.push(`Behavioral anomaly detected (${threatClass})`);
+    if (replyToMismatch) reasons.push("Suspicious external Reply-To redirection");
+
+    return {
+      assessment: "Likely Compromised Account",
+      confidence: reasons.length >= 3 ? 88 : 76,
+      reasons,
+    };
+  }
+
+  // 4. Likely Malicious Infrastructure
+  const hasMaliciousPayload =
+    attachments.some((a) => a.suspicious) ||
+    threatClass === "malware_delivery" ||
+    threatClass === "credential_phishing";
+  const untrustedHops = relayPath.filter((h) => h.isHosting && !domainMatches);
+
+  if (hasMaliciousPayload && untrustedHops.length > 0) {
+    if (untrustedHops.length > 0)
+      reasons.push("Email originated from cloud/hosting infrastructure");
+    if (!domainMatches) reasons.push("Infrastructure does not match vendor profile");
+    if (attachments.some((a) => a.suspicious)) reasons.push("Suspicious attachment detected");
+    if (threatClass !== "benign") reasons.push("Existing high-risk classification");
+
+    return {
+      assessment: "Likely Malicious Infrastructure",
+      confidence: reasons.length >= 3 ? 85 : 75,
+      reasons,
+    };
+  }
+
+  return {
+    assessment: "Insufficient Evidence",
+    confidence: 0,
+    reasons: [],
   };
 }
 
@@ -263,13 +392,20 @@ export async function analyzeEml(input: {
   const raw = input.bytes.toString("utf-8");
   const envelope = splitMessage(raw);
   const headers = parseHeaders(envelope.headers);
-  const mime = { text: [] as string[], attachments: [] as Attachment[] };
+  const mime = {
+    text: [] as string[],
+    plainText: [] as string[],
+    htmlText: [] as string[],
+    attachments: [] as Attachment[],
+  };
   await parseMime(raw, mime);
-  const body =
-    mime.text
-      .join("\n\n")
-      .replace(/\s{3,}/g, " ")
-      .trim() || envelope.body.trim();
+  const selectedText =
+    mime.plainText.length > 0
+      ? mime.plainText.join("\n\n")
+      : mime.htmlText.length > 0
+        ? mime.htmlText.join("\n\n")
+        : mime.text.join("\n\n");
+  const body = selectedText.replace(/\s{3,}/g, " ").trim() || envelope.body.trim();
   const fromRaw = first(headers, "from") || "";
   const displayMatch = fromRaw.match(/^"?([^"<]+)"?\s*<.+>$/);
   const displayName = displayMatch
@@ -382,11 +518,33 @@ export async function analyzeEml(input: {
       ].filter(Boolean),
     ),
   ];
-  const relayPath = relays(headers);
+
+  const returnPathDomain = returnPath ? domain(returnPath) : "";
+  const candidateDomains = [
+    senderDomain,
+    returnPathDomain,
+    replyTo ? domain(replyTo) : "",
+    ...domains,
+  ].filter(Boolean);
+
+  const uniqueDomainsToEnrich = [...new Set(candidateDomains)].slice(0, 5);
+
+  const domainIntelligencePromises = await Promise.allSettled(
+    uniqueDomainsToEnrich.map((d) => enrichDomain(d)),
+  );
+
+  const domainIntelligence = domainIntelligencePromises
+    .map((r) => (r.status === "fulfilled" ? r.value : undefined))
+    .filter(Boolean) as DomainIntelligence[];
+
+  const relayPath = await relays(headers);
   const confidence = Math.max(0.35, Math.min(0.98, 0.5 + score / 200));
-  const shouldHold =
-    threatClass === "invoice_fraud" &&
-    (financialDetails.paymentChange || Boolean(financialDetails.accountLast4));
+  const shouldHold = calculateShouldHold({
+    threatClass,
+    hasPaymentChange: financialDetails.paymentChange,
+    hasBankAccount: Boolean(financialDetails.accountLast4),
+    riskScore: score,
+  });
 
   const financialNotes: { label: string; severity: Severity }[] = [];
   if (financialDetails.accountLast4) {
@@ -427,6 +585,18 @@ export async function analyzeEml(input: {
     });
   }
 
+  const originAssessment = assessOrigin(
+    authResults,
+    from || fromRaw,
+    replyTo,
+    returnPath,
+    domainMatches,
+    relayPath,
+    threatClass,
+    financialDetails.paymentChange,
+    mime.attachments,
+  );
+
   return {
     id: crypto.randomUUID(),
     case_number: input.caseNumber,
@@ -465,7 +635,10 @@ export async function analyzeEml(input: {
       },
       financial: {
         ...(financialDetails.amount
-          ? { invoice_amount: financialDetails.amount, currency: "USD" }
+          ? {
+              invoice_amount: financialDetails.amount,
+              currency: financialDetails.currency || "USD",
+            }
           : {}),
         ...(financialDetails.accountLast4
           ? {
@@ -502,6 +675,8 @@ export async function analyzeEml(input: {
       severity: signal.severity ?? "medium",
       ...(signal.weight === undefined ? {} : { weight: signal.weight }),
     })),
+    origin_assessment: originAssessment,
+    domain_intelligence: domainIntelligence.length > 0 ? domainIntelligence : undefined,
     relay_path: relayPath,
     actions: [],
   };

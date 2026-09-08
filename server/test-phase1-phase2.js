@@ -197,6 +197,160 @@ async function runTests() {
     "Google Workspace connector is configured and active",
   );
 
+  // ── TEST 9: Multi-Tenant Data Isolation & Boundary Enforcement ──
+  console.log("\n9. Testing Multi-Tenant Data Isolation & Boundary Enforcement...");
+  // Provision Tenant B
+  const tenantBRes = await fetch(`${BASE_URL}/api/tenants/organizations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminApiKey}` },
+    body: JSON.stringify({ name: "Omega Financial Systems", slug: "omega-fin" }),
+  });
+  const tenantBData = await tenantBRes.json();
+  assert(
+    tenantBRes.status === 201,
+    `Provisioned Tenant B 'Omega Financial Systems' (slug: ${tenantBData.slug})`,
+  );
+
+  // Tenant B cannot see Tenant A's cases
+  const tenantBCasesRes = await fetch(`${BASE_URL}/api/cases`, {
+    headers: { "X-Tenant-ID": "omega-fin" },
+  });
+  const tenantBCases = await tenantBCasesRes.json();
+  assert(tenantBCasesRes.status === 200, "Tenant B GET /api/cases returned HTTP 200");
+  assert(
+    Array.isArray(tenantBCases) && tenantBCases.length === 0,
+    `Tenant B sees 0 cases in their tenant space (got ${tenantBCases.length})`,
+  );
+
+  // Tenant B cannot access Tenant A's case detail (returns 404)
+  const crossCaseRes = await fetch(`${BASE_URL}/api/cases/c-1042`, {
+    headers: { "X-Tenant-ID": "omega-fin" },
+  });
+  assert(
+    crossCaseRes.status === 404,
+    `Tenant B blocked with HTTP 404 accessing Tenant A case 'c-1042' (got ${crossCaseRes.status})`,
+  );
+
+  // Tenant B cannot execute action on Tenant A's case (returns 404)
+  const crossActionRes = await fetch(`${BASE_URL}/api/cases/c-1042/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Tenant-ID": "omega-fin" },
+    body: JSON.stringify({ type: "hold_payment", note: "Unauthorized cross-tenant action" }),
+  });
+  assert(
+    crossActionRes.status === 404,
+    `Tenant B blocked with HTTP 404 mutating Tenant A case (got ${crossActionRes.status})`,
+  );
+
+  // Tenant B cannot export report for Tenant A's case (returns 404)
+  const crossReportRes = await fetch(`${BASE_URL}/api/cases/c-1042/report`, {
+    headers: { "X-Tenant-ID": "omega-fin" },
+  });
+  assert(
+    crossReportRes.status === 404,
+    `Tenant B blocked with HTTP 404 accessing Tenant A forensic report (got ${crossReportRes.status})`,
+  );
+
+  // Tenant B cannot see Tenant A's vendors
+  const tenantBVendorsRes = await fetch(`${BASE_URL}/api/vendors`, {
+    headers: { "X-Tenant-ID": "omega-fin" },
+  });
+  const tenantBVendors = await tenantBVendorsRes.json();
+  assert(tenantBVendorsRes.status === 200, "Tenant B GET /api/vendors returned HTTP 200");
+  assert(
+    Array.isArray(tenantBVendors) && tenantBVendors.length === 0,
+    `Tenant B sees 0 vendors in their tenant space (got ${tenantBVendors.length})`,
+  );
+
+  // Tenant B cannot access Tenant A's vendor detail (returns 404)
+  const crossVendorRes = await fetch(`${BASE_URL}/api/vendors/v-1`, {
+    headers: { "X-Tenant-ID": "omega-fin" },
+  });
+  assert(
+    crossVendorRes.status === 404,
+    `Tenant B blocked with HTTP 404 accessing Tenant A vendor 'v-1' (got ${crossVendorRes.status})`,
+  );
+
+  // Tenant B cannot update Tenant A's vendor (returns 404)
+  const crossVendorUpdateRes = await fetch(`${BASE_URL}/api/vendors/v-1`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-Tenant-ID": "omega-fin" },
+    body: JSON.stringify({ name: "Hacked Vendor" }),
+  });
+  assert(
+    crossVendorUpdateRes.status === 404,
+    `Tenant B blocked with HTTP 404 updating Tenant A vendor (got ${crossVendorUpdateRes.status})`,
+  );
+
+  // Tenant B cannot delete Tenant A's vendor (returns 404)
+  const crossVendorDeleteRes = await fetch(`${BASE_URL}/api/vendors/v-1`, {
+    method: "DELETE",
+    headers: { "X-Tenant-ID": "omega-fin" },
+  });
+  assert(
+    crossVendorDeleteRes.status === 404,
+    `Tenant B blocked with HTTP 404 deleting Tenant A vendor (got ${crossVendorDeleteRes.status})`,
+  );
+
+  // Tenant B cannot see Tenant A's campaigns
+  const tenantBCampaignsRes = await fetch(`${BASE_URL}/api/campaigns`, {
+    headers: { "X-Tenant-ID": "omega-fin" },
+  });
+  const tenantBCampaigns = await tenantBCampaignsRes.json();
+  assert(tenantBCampaignsRes.status === 200, "Tenant B GET /api/campaigns returned HTTP 200");
+  assert(
+    Array.isArray(tenantBCampaigns) && tenantBCampaigns.length === 0,
+    `Tenant B sees 0 campaigns in their tenant space (got ${tenantBCampaigns.length})`,
+  );
+
+  console.log("\n10. Testing Anti-Downgrade & Payment Hold Policy Enforcement (/api/analyze)...");
+  const testEmlContent = `From: billing@apex-logistics-fake.com
+To: ap@sentinelcorp.com
+Subject: Urgent: Updated Wire Instructions for Invoice #9821
+Date: Mon, 07 Sep 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Please note our bank details have changed.
+Beneficiary: Apex Logistics LLC
+New Bank Account: 1234567890123456
+Please wire the outstanding payment of $45,000 immediately to the new account.
+`;
+  const formData = new FormData();
+  formData.append(
+    "file",
+    new Blob([testEmlContent], { type: "message/rfc822" }),
+    "invoice_update.eml",
+  );
+
+  const analyzeRes = await fetch(`${BASE_URL}/api/analyze`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminApiKey}`,
+      "X-Tenant-ID": "sentinel-corp",
+    },
+    body: formData,
+  });
+
+  const analyzeData = await analyzeRes.json();
+  const createdCase = analyzeData.case;
+  assert(
+    analyzeRes.status === 201,
+    `POST /api/analyze returned HTTP 201 (got ${analyzeRes.status})`,
+  );
+  assert(
+    createdCase && createdCase.threat_class === "invoice_fraud",
+    `Threat class correctly identified as 'invoice_fraud' (got '${createdCase?.threat_class}')`,
+  );
+  assert(
+    createdCase && createdCase.assigned_action === "Hold payment",
+    `Assigned action correctly locked to 'Hold payment' (got '${createdCase?.assigned_action}')`,
+  );
+  assert(
+    createdCase && createdCase.decision_banner.includes("Hold payment recommended"),
+    `Decision banner enforces payment hold recommendation`,
+  );
+
   console.log("\n==================================================================");
   console.log(`  📊 RESULTS: ${passed} Passed, ${failed} Failed`);
   console.log("==================================================================\n");

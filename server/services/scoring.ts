@@ -32,3 +32,18 @@ export function fuseScores(params: {
     finalConfidence,
   };
 }
+
+export function calculateShouldHold(params: {
+  threatClass: string;
+  ruleThreatClass?: string;
+  hasPaymentChange: boolean;
+  hasBankAccount: boolean;
+  riskScore: number;
+  ruleRiskScore?: number;
+}): boolean {
+  const isInvoiceThreat =
+    params.threatClass === "invoice_fraud" || params.ruleThreatClass === "invoice_fraud";
+  const hasFinancialChange = params.hasPaymentChange || params.hasBankAccount;
+  const effectiveScore = Math.max(params.riskScore, params.ruleRiskScore ?? 0);
+  return (isInvoiceThreat && hasFinancialChange) || effectiveScore >= 85;
+}

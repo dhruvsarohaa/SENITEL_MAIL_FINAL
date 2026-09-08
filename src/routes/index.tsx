@@ -119,7 +119,7 @@ function Dashboard() {
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1.5">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-wide">
-              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span className="size-1.5 rounded-full bg-emerald-500 live-dot" />
               Live Defense Active
             </span>
           </div>
@@ -130,7 +130,7 @@ function Dashboard() {
         <div className="flex items-center gap-3">
           <Link
             to="/analyze"
-            className="inline-flex items-center gap-2 rounded-xl bg-primary/20 hover:bg-primary/30 border border-primary/30 text-primary px-4 py-2.5 text-xs font-semibold shadow-sm transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0"
+            className="btn-tactile inline-flex items-center gap-2 rounded-xl bg-primary/20 hover:bg-primary/30 border border-primary/30 text-primary px-4 py-2.5 text-xs font-semibold shadow-sm"
           >
             Investigate Message
             <ArrowUpRight className="size-3.5" aria-hidden />
@@ -155,7 +155,7 @@ function Dashboard() {
                 <AnimatedCounter value={heldAmount || 320420} />
               </p>
               <p className="mt-1.5 text-xs text-emerald-400 font-medium flex items-center gap-1">
-                <span className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                <span className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] live-dot" />
                 100% intercepted
               </p>
             </div>
@@ -211,7 +211,7 @@ function Dashboard() {
                 M365 & Gmail
               </p>
               <p className="mt-1.5 text-xs text-primary font-medium flex items-center gap-1">
-                <span className="size-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(56,189,248,0.5)]" />
+                <span className="size-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(56,189,248,0.5)] live-dot" />
                 Synchronized in real-time
               </p>
             </div>

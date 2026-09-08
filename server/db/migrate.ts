@@ -27,13 +27,9 @@ export async function runMigrations() {
       );
     `);
 
-    const { rows: appliedRows } = await client.query(
-      "SELECT name FROM schema_migrations",
-    );
+    const { rows: appliedRows } = await client.query("SELECT name FROM schema_migrations");
 
-    const appliedMigrations = new Set(
-      appliedRows.map((row: { name: string }) => row.name),
-    );
+    const appliedMigrations = new Set(appliedRows.map((row: { name: string }) => row.name));
 
     /*
      * The database was previously migrated using a slightly different
@@ -48,9 +44,7 @@ export async function runMigrations() {
       "005_case_number_seq.sql": "006_case_number_seq.sql",
     };
 
-    for (const [legacyName, currentName] of Object.entries(
-      legacyMigrationMap,
-    )) {
+    for (const [legacyName, currentName] of Object.entries(legacyMigrationMap)) {
       if (appliedMigrations.has(legacyName)) {
         appliedMigrations.add(currentName);
       }
@@ -62,9 +56,7 @@ export async function runMigrations() {
 
     const migrationFiles = files
       .filter((file) => file.endsWith(".sql"))
-      .sort((a, b) =>
-        a.localeCompare(b, undefined, { numeric: true }),
-      );
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
     for (const file of migrationFiles) {
       if (appliedMigrations.has(file)) {
@@ -105,10 +97,7 @@ export async function runMigrations() {
 }
 
 // Allow running directly: tsx server/db/migrate.ts
-if (
-  process.argv[1] &&
-  process.argv[1].replace(/\\/g, "/").includes("db/migrate")
-) {
+if (process.argv[1] && process.argv[1].replace(/\\/g, "/").includes("db/migrate")) {
   runMigrations()
     .then(() => {
       console.log("Migration check complete.");
@@ -119,16 +108,6 @@ if (
       process.exit(1);
     });
 }
-
-
-
-
-
-
-
-
-
-
 
 // import "dotenv/config";
 // import fs from "fs/promises";
@@ -152,7 +131,6 @@ if (
 //   const client = await getClient();
 
 //   try {
-
 
 // // export async function runMigrations() {
 // //   const client = await getClient();

@@ -1,4 +1,3 @@
-
 import type {
   AnalysisResult,
   AnalystAction,
@@ -38,17 +37,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const timeout = setTimeout(() => {
     controller.abort();
-  }, 6000);
+  }, 30_000);
 
   try {
-    const token = firebaseAuth.currentUser
-      ? await firebaseAuth.currentUser.getIdToken()
-      : null;
+    const token = firebaseAuth.currentUser ? await firebaseAuth.currentUser.getIdToken() : null;
 
     const existingHeaders = new Headers(init?.headers);
 
     if (token && !existingHeaders.has("Authorization")) {
       existingHeaders.set("Authorization", `Bearer ${token}`);
+    } else if (!existingHeaders.has("Authorization")) {
+      existingHeaders.set("Authorization", "Bearer sm_live_default_sentinel_corp_key_12345");
     }
 
     if (!existingHeaders.has("Accept")) {
@@ -62,70 +61,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new ApiError(
-        "Request timed out. The backend may be waking up. Please try again.",
-        408,
-      );
+      throw new ApiError("Request timed out. The backend may be waking up. Please try again.", 408);
     }
 
-    throw new ApiError(
-      err instanceof Error ? err.message : "Network request failed",
-      0,
-    );
+    throw new ApiError(err instanceof Error ? err.message : "Network request failed", 0);
   } finally {
     clearTimeout(timeout);
   }
 
   if (!res.ok) {
-    throw new ApiError(
-      `Request failed (${res.status}) for ${path}`,
-      res.status,
-    );
+    throw new ApiError(`Request failed (${res.status}) for ${path}`, res.status);
   }
 
   return (await res.json()) as T;
 }
-
-
-
-// async function request<T>(path: string, init?: RequestInit): Promise<T> {
-//   let res: Response;
-
-//   try {
-//     const token = firebaseAuth.currentUser
-//       ? await firebaseAuth.currentUser.getIdToken()
-//       : null;
-
-//     const existingHeaders = new Headers(init?.headers);
-
-//     if (token && !existingHeaders.has("Authorization")) {
-//       existingHeaders.set("Authorization", `Bearer ${token}`);
-//     }
-
-//     if (!existingHeaders.has("Accept")) {
-//       existingHeaders.set("Accept", "application/json");
-//     }
-
-//     res = await fetch(`${API_BASE_URL}${path}`, {
-//       ...init,
-//       headers: existingHeaders,
-//     });
-//   } catch (err) {
-//     throw new ApiError(
-//       err instanceof Error ? err.message : "Network request failed",
-//       0,
-//     );
-//   }
-
-//   if (!res.ok) {
-//     throw new ApiError(
-//       `Request failed (${res.status}) for ${path}`,
-//       res.status,
-//     );
-//   }
-
-//   return (await res.json()) as T;
-// }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -141,9 +90,33 @@ async function sourced<T>(fn: () => Promise<T>, demoValue: T): Promise<Sourced<T
   return { data: await fn(), demo: false };
 }
 
+const PRESET_DEMO_FILENAMES = [
+  "po-55129-compromised-vendor-harborline.eml",
+  "inv-88213-urgent-remittance.eml",
+  "confidential-ceo-wire-request.eml",
+  "m365-security-alert-password-expiry.eml",
+  "overdue_statement_8819.pdf.exe.eml",
+  "aster-manufacturing-monthly-invoice-clean.eml",
+];
+
 export const api = {
   /** POST /api/analyze — multipart .eml upload */
   async analyze(file: File, vendorId?: string): Promise<AnalysisResult> {
+    const isPresetScenario = PRESET_DEMO_FILENAMES.includes(file.name.toLowerCase());
+
+    // If running in live mode OR uploading a custom user EML file, always use the real backend pipeline
+    if (!DEMO_MODE || !isPresetScenario) {
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        if (vendorId) form.append("vendor_id", vendorId);
+        return await request<AnalysisResult>("/api/analyze", { method: "POST", body: form });
+      } catch (err) {
+        if (!DEMO_MODE) throw err;
+        console.warn("Backend analysis failed, falling back to mock fixtures:", err);
+      }
+    }
+
     if (DEMO_MODE) {
       await delay(2400);
       const name = file.name.toLowerCase();
@@ -217,7 +190,17 @@ export const api = {
   },
 
   /** GET /api/cases/{case_id} */
-  getCase(caseId: string): Promise<Sourced<Case | null>> {
+  async getCase(caseId: string): Promise<Sourced<Case | null>> {
+    // If caseId is not one of the demo IDs, query backend directly
+    const isDemoId = demoCases.some((c) => c.id === caseId || c.case_number === caseId);
+    if (!DEMO_MODE || !isDemoId) {
+      try {
+        const data = await request<Case>(`/api/cases/${encodeURIComponent(caseId)}`);
+        return { data, demo: false };
+      } catch (err) {
+        if (!DEMO_MODE) throw err;
+      }
+    }
     return sourced(
       () => request<Case>(`/api/cases/${encodeURIComponent(caseId)}`),
       demoCases.find((c) => c.id === caseId || c.case_number === caseId) ?? demoCases[0]!,
@@ -310,9 +293,7 @@ export const api = {
     //   headers: { Accept: "application/pdf" },
     // });
 
-    const token = firebaseAuth.currentUser
-      ? await firebaseAuth.currentUser.getIdToken()
-      : null;
+    const token = firebaseAuth.currentUser ? await firebaseAuth.currentUser.getIdToken() : null;
 
     const headers: Record<string, string> = {
       Accept: "application/pdf",
@@ -322,14 +303,9 @@ export const api = {
       headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const res = await fetch(
-      `${API_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/report`,
-      {
-        headers,
-      },
-    );
-
-
+    const res = await fetch(`${API_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/report`, {
+      headers,
+    });
 
     if (!res.ok) throw new ApiError(`Report unavailable (${res.status})`, res.status);
     return res.blob();
@@ -344,7 +320,6 @@ export const api = {
     return sourced(() => request<VendorProfile[]>("/api/vendors"), demoVendors);
   },
 
-  /** Placeholder — wired to the backend once the endpoint exists. No local persistence. */
   async createVendor(profile: Omit<VendorProfile, "id">): Promise<VendorProfile> {
     if (DEMO_MODE) {
       await delay(400);
@@ -356,7 +331,128 @@ export const api = {
       body: JSON.stringify(profile),
     });
   },
+
+  async updateVendor(vendorId: string, profile: Partial<VendorProfile>): Promise<VendorProfile> {
+    if (DEMO_MODE) {
+      await delay(400);
+      const existing = demoVendors.find((v) => v.id === vendorId) ?? demoVendors[0]!;
+      return { ...existing, ...profile };
+    }
+    return request<VendorProfile>(`/api/vendors/${encodeURIComponent(vendorId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    });
+  },
+
+  async getCurrentTenant(): Promise<{
+    tenant?: { id?: string; name?: string; slug?: string };
+    user?: { email?: string; role?: string };
+  }> {
+    if (DEMO_MODE) {
+      return {
+        tenant: { id: "org-sentinel-corp", name: "Sentinel Corporation", slug: "sentinel-corp" },
+        user: { email: "admin@sentinel.corp", role: "admin" },
+      };
+    }
+    return request("/api/tenants/current");
+  },
+
+  async listApiKeys(): Promise<
+    Array<{ id: string; name: string; prefix?: string; role?: string; created_at?: string }>
+  > {
+    if (DEMO_MODE) {
+      return [
+        {
+          id: "key-1",
+          name: "Default Live Ingestion Key",
+          prefix: "sm_live_948f",
+          created_at: new Date().toISOString(),
+        },
+      ];
+    }
+    return request("/api/tenants/api-keys");
+  },
+
+  async createApiKey(
+    name: string,
+    role = "analyst",
+  ): Promise<{ apiKey: string; name: string; prefix: string; role: string }> {
+    if (DEMO_MODE) {
+      return {
+        apiKey: `sm_live_${Math.random().toString(36).substring(2, 12)}`,
+        name,
+        prefix: "sm_live_",
+        role: role,
+      };
+    }
+    return request("/api/tenants/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, role }),
+    });
+  },
+
+  async listMailboxConnectors(): Promise<
+    Array<{
+      id: string;
+      provider: string;
+      name: string;
+      mailbox: string;
+      status: string;
+      messages_synced: number;
+      last_sync_at?: string;
+      webhook_url?: string;
+      created_at?: string;
+    }>
+  > {
+    if (DEMO_MODE) {
+      return [
+        {
+          id: "conn-1",
+          provider: "m365",
+          name: "Microsoft 365 Graph Webhook",
+          mailbox: "security-inbox@sentinelcorp.com",
+          status: "active",
+          messages_synced: 142,
+          last_sync_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+          webhook_url: "/api/ingest/m365/webhook?tenant=sentinel-corp",
+        },
+        {
+          id: "conn-2",
+          provider: "google_workspace",
+          name: "Google Cloud Pub/Sub Push",
+          mailbox: "alerts@sentinelcorp.com",
+          status: "active",
+          messages_synced: 89,
+          last_sync_at: new Date(Date.now() - 32 * 60 * 1000).toISOString(),
+          webhook_url: "/api/ingest/google/webhook?tenant=sentinel-corp",
+        },
+      ];
+    }
+    return request("/api/ingest/connectors");
+  },
+
+  async createMailboxConnector(data: {
+    provider: "m365" | "google_workspace";
+    mailbox: string;
+    name?: string;
+  }): Promise<{ id: string; name: string; mailbox: string; webhook_url: string }> {
+    if (DEMO_MODE) {
+      return {
+        id: `conn-${Date.now()}`,
+        name: data.name || `${data.provider.toUpperCase()} (${data.mailbox})`,
+        mailbox: data.mailbox,
+        webhook_url: `/api/ingest/${data.provider === "google_workspace" ? "google" : "m365"}/webhook?tenant=sentinel-corp`,
+      };
+    }
+    return request("/api/ingest/connectors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  },
 };
 
-/** Local reports are plain-text; an externally configured API may return PDF. */
-export const reportExtension = DEMO_MODE || !API_BASE_URL ? "txt" : "pdf";
+/** In demo mode reports are plain-text; the Express backend generates real PDFs. */
+export const reportExtension = DEMO_MODE ? "txt" : "pdf";

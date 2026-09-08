@@ -1,12 +1,13 @@
 import crypto from "node:crypto";
 import pool, { isPostgresActive } from "../db/connection.js";
+import { getCollections, isMongoActive } from "../db/mongo.js";
 
 export const DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001";
 
 /**
  * In-memory tenant store fallback when running in zero-dependency MemoryStore mode.
  */
-const memOrgs = new Map([
+export const memOrgs = new Map([
   [
     DEFAULT_ORG_ID,
     {
@@ -20,7 +21,7 @@ const memOrgs = new Map([
   ],
 ]);
 
-const memUsers = new Map([
+export const memUsers = new Map([
   [
     "00000000-0000-0000-0000-000000000002",
     {
@@ -34,7 +35,7 @@ const memUsers = new Map([
   ],
 ]);
 
-const memApiKeys = new Map();
+export const memApiKeys = new Map();
 
 /** Hash an API key for safe constant-time storage & lookup. */
 export function hashKey(rawKey) {
@@ -68,12 +69,27 @@ export async function generateApiKey(orgId, name, role = "admin") {
     return { rawKey, ...record };
   }
 
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.api_keys) {
+    await mongoCols.api_keys.insertOne({
+      _id: record.id,
+      ...record,
+    });
+    return { rawKey, ...record };
+  }
+
+  console.warn(
+    "⚠️  [MemoryStore] API key saved to ephemeral in-memory map. Will NOT persist across restarts.",
+  );
   memApiKeys.set(keyHash, record);
   return { rawKey, ...record };
 }
 
 /** Seed default dev/testing API key only in non-production environments. */
-const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+const isDev =
+  !process.env.NODE_ENV ||
+  process.env.NODE_ENV === "development" ||
+  process.env.NODE_ENV === "test";
 if (isDev) {
   const defaultKeyHash = hashKey("sm_live_default_sentinel_corp_key_12345");
   memApiKeys.set(defaultKeyHash, {
@@ -86,7 +102,9 @@ if (isDev) {
     created_at: new Date().toISOString(),
     last_used: null,
   });
-  console.warn("⚠️  [DEV ONLY] Default admin API key (sm_live_default_sentinel_corp_key_12345) seeded in memory. NEVER use in production!");
+  console.warn(
+    "⚠️  [DEV ONLY] Default admin API key (sm_live_default_sentinel_corp_key_12345) seeded in memory. NEVER use in production!",
+  );
 }
 
 /** Retrieve organization by ID or slug. */
@@ -97,6 +115,14 @@ export async function getOrganization(orgIdOrSlug) {
       [orgIdOrSlug],
     );
     return res.rows && res.rows[0] ? res.rows[0] : null;
+  }
+
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.organizations) {
+    const org = await mongoCols.organizations.findOne({
+      $or: [{ id: orgIdOrSlug }, { slug: orgIdOrSlug }, { _id: orgIdOrSlug }],
+    });
+    return org || null;
   }
 
   for (const org of memOrgs.values()) {
@@ -125,6 +151,18 @@ export async function createOrganization({ name, slug, plan = "enterprise" }) {
     return org;
   }
 
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.organizations) {
+    await mongoCols.organizations.insertOne({
+      _id: org.id,
+      ...org,
+    });
+    return org;
+  }
+
+  console.warn(
+    "⚠️  [MemoryStore] Organization saved to ephemeral in-memory map. Will NOT persist across restarts.",
+  );
   memOrgs.set(id, org);
   return org;
 }
@@ -151,30 +189,34 @@ export async function validateApiKey(rawKey) {
         role: res.rows[0].role,
       };
     }
-    // Check ephemeral dev key if in development mode
-    if (process.env.NODE_ENV === "development") {
-      const devKey = memApiKeys.get(keyHash);
-      if (devKey) {
-        return {
-          keyId: devKey.id,
-          orgId: devKey.org_id,
-          orgName: "Sentinel Corporation",
-          orgSlug: "sentinel-corp",
-          role: devKey.role,
-        };
-      }
-    }
-    return null;
   }
 
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.api_keys) {
+    const key = await mongoCols.api_keys.findOne({ key_hash: keyHash });
+    if (key) {
+      const org = await mongoCols.organizations.findOne({
+        $or: [{ id: key.org_id }, { _id: key.org_id }],
+      });
+      return {
+        keyId: key.id,
+        orgId: key.org_id,
+        orgName: org?.name ?? "Unknown Org",
+        orgSlug: org?.slug ?? "unknown",
+        role: key.role,
+      };
+    }
+  }
+
+  // Check ephemeral in-memory map (development or MemoryStore mode)
   const inMem = memApiKeys.get(keyHash);
   if (inMem) {
     const org = memOrgs.get(inMem.org_id);
     return {
       keyId: inMem.id,
       orgId: inMem.org_id,
-      orgName: org?.name ?? "Unknown Org",
-      orgSlug: org?.slug ?? "unknown",
+      orgName: org?.name ?? "Sentinel Corporation",
+      orgSlug: org?.slug ?? "sentinel-corp",
       role: inMem.role,
     };
   }
@@ -189,6 +231,15 @@ export async function listApiKeys(orgId) {
       [orgId],
     );
     return res.rows ?? [];
+  }
+
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.api_keys) {
+    const keys = await mongoCols.api_keys
+      .find({ org_id: orgId })
+      .project({ key_hash: 0, _id: 0 })
+      .toArray();
+    return keys;
   }
 
   const keys = Array.from(memApiKeys.values()).filter((k) => k.org_id === orgId);
@@ -215,6 +266,18 @@ export async function addOrganizationUser({ orgId, email, name, role = "analyst"
     return user;
   }
 
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.users) {
+    await mongoCols.users.insertOne({
+      _id: user.id,
+      ...user,
+    });
+    return user;
+  }
+
+  console.warn(
+    "⚠️  [MemoryStore] User saved to ephemeral in-memory map. Will NOT persist across restarts.",
+  );
   memUsers.set(id, user);
   return user;
 }
@@ -229,5 +292,83 @@ export async function listOrganizationUsers(orgId) {
     return res.rows ?? [];
   }
 
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.users) {
+    const users = await mongoCols.users.find({ org_id: orgId }).project({ _id: 0 }).toArray();
+    return users;
+  }
+
   return Array.from(memUsers.values()).filter((u) => u.org_id === orgId);
+}
+
+/** Resolve a user and their organization context by email across any active backend. */
+export async function resolveUserByEmail(email) {
+  if (!email) return null;
+  const normalized = email.toLowerCase().trim();
+
+  if (isPostgresActive) {
+    try {
+      const res = await pool.query(
+        `SELECT
+           u.id,
+           u.org_id,
+           u.email,
+           u.name,
+           u.role,
+           o.name AS org_name,
+           o.slug AS org_slug,
+           o.plan AS org_plan
+         FROM users u
+         JOIN organizations o ON o.id = u.org_id
+         WHERE LOWER(u.email) = $1
+         LIMIT 1`,
+        [normalized],
+      );
+      if (res.rows?.[0]) return res.rows[0];
+    } catch {
+      // ignore
+    }
+  }
+
+  const mongoCols = isMongoActive ? getCollections() : null;
+  if (mongoCols?.users) {
+    try {
+      const user = await mongoCols.users.findOne({ email: normalized });
+      if (user) {
+        const org = await mongoCols.organizations.findOne({
+          $or: [{ id: user.org_id }, { _id: user.org_id }],
+        });
+        return {
+          id: user.id,
+          org_id: user.org_id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          org_name: org?.name ?? "Sentinel Corporation",
+          org_slug: org?.slug ?? "sentinel-corp",
+          org_plan: org?.plan ?? "enterprise",
+        };
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  for (const user of memUsers.values()) {
+    if (user.email.toLowerCase() === normalized) {
+      const org = memOrgs.get(user.org_id);
+      return {
+        id: user.id,
+        org_id: user.org_id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        org_name: org?.name ?? "Sentinel Corporation",
+        org_slug: org?.slug ?? "sentinel-corp",
+        org_plan: org?.plan ?? "enterprise",
+      };
+    }
+  }
+
+  return null;
 }

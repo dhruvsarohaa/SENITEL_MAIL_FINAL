@@ -142,6 +142,7 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
       bankAccountLast4: kase.evidence.financial.bank_account_last4,
       bodyText: kase.body_preview ?? "",
       sentAt: new Date(),
+      orgId,
     });
 
     // Override classification if AI provides a different answer, but block downgrade if rules detected a threat

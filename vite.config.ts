@@ -5,13 +5,21 @@ import react from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+/**
+ * Parse ALLOWED_HOSTS env var (comma-separated) for Vite host header validation.
+ * Falls back to localhost only when unset.
+ */
+const allowedHosts: string[] = process.env["ALLOWED_HOSTS"]
+  ? process.env["ALLOWED_HOSTS"].split(",").map((h) => h.trim())
+  : ["localhost"];
+
 export default defineConfig({
   preview: {
     host: true,
-    allowedHosts: true,
+    allowedHosts,
   },
   server: {
-    allowedHosts: true,
+    allowedHosts,
     proxy: {
       // In dev, forward /api requests to the Express backend on port 3001
       "/api": {
@@ -30,7 +38,16 @@ export default defineConfig({
       },
       server: { entry: "server" },
     }),
-    nitro({ defaultPreset: process.env.NITRO_PRESET || "node-server" }),
+    nitro({ defaultPreset: process.env["NITRO_PRESET"] || "node-server" }),
     react(),
   ],
+  // @ts-expect-error Vitest configuration extension
+  test: {
+    poolOptions: {
+      threads: {
+        isolate: false,
+      },
+    },
+    teardownTimeout: 1000,
+  },
 });

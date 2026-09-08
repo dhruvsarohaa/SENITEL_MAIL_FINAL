@@ -7,7 +7,7 @@ import { isMongoActive, getCollections, getNextCaseNumberMongo } from "./mongo.j
 const { Pool } = pg;
 
 export let isPostgresActive = false;
-let realPool: pg.Pool | null = null;
+export let realPool: pg.Pool | null = null;
 
 // In-memory fallback store when neither MongoDB nor PostgreSQL is connected
 export class MemoryStore {
@@ -77,6 +77,15 @@ export async function initDbPool(): Promise<boolean> {
     realPool = null;
     return false;
   }
+}
+
+/** Close PostgreSQL pool safely */
+export async function closePostgres(): Promise<void> {
+  if (realPool) {
+    await realPool.end();
+    realPool = null;
+  }
+  isPostgresActive = false;
 }
 
 /**
@@ -441,6 +450,81 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
           if (params[0]) kase.decision = params[0];
           if (typeof params[1] === "number") kase.triage_minutes = params[1];
         }
+      } else if (sql.includes("campaign_id = $1, updated_at = now() WHERE id = ANY($2)")) {
+        const campId = params[0];
+        const ids = (params[1] as string[]) || [];
+        for (const c of memoryStore.cases.values()) {
+          if (ids.includes(c.id) || ids.includes(c.case_number)) {
+            (c as any).campaign_id = campId;
+          }
+        }
+      } else if (sql.includes("campaign_graph = $1, updated_at = now() WHERE id = ANY($2)")) {
+        const graph = typeof params[0] === "string" ? JSON.parse(params[0]) : params[0];
+        const ids = (params[1] as string[]) || [];
+        for (const c of memoryStore.cases.values()) {
+          if (ids.includes(c.id) || ids.includes(c.case_number)) {
+            (c as any).campaign_graph = graph;
+          }
+        }
+      }
+    }
+    return { rows: [] };
+  }
+
+  // Insert campaign in MemoryStore
+  if (sql.startsWith("INSERT INTO campaigns")) {
+    if (params) {
+      const [
+        id,
+        org_id,
+        name,
+        severity,
+        shared_indicators,
+        case_ids,
+        case_count,
+        domains,
+        reply_tos,
+        bank_accounts,
+        attachment_hashes,
+        recommended_actions,
+      ] = params;
+      const campDoc: Campaign & { org_id?: string } = {
+        id,
+        name,
+        severity,
+        case_count: Number(case_count),
+        shared_indicators: shared_indicators ?? [],
+        first_seen: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        case_ids: case_ids ?? [],
+        victim_teams: [],
+        domains: domains ?? [],
+        reply_tos: reply_tos ?? [],
+        bank_accounts: bank_accounts ?? [],
+        attachment_hashes: attachment_hashes ?? [],
+        recommended_actions: recommended_actions ?? [],
+      };
+      (campDoc as any).org_id = org_id || "00000000-0000-0000-0000-000000000001";
+      memoryStore.campaigns.set(id, campDoc as Campaign);
+    }
+    return { rows: [] };
+  }
+
+  // Update campaign in MemoryStore
+  if (sql.startsWith("UPDATE campaigns SET")) {
+    if (params) {
+      const campaignId = params[params.length - 1];
+      const camp = memoryStore.campaigns.get(campaignId);
+      if (camp) {
+        camp.case_ids = params[0] ?? camp.case_ids;
+        camp.shared_indicators = params[1] ?? camp.shared_indicators;
+        camp.severity = params[2] ?? camp.severity;
+        camp.case_count = Number(params[3]) || camp.case_count;
+        camp.domains = params[4] ?? camp.domains;
+        camp.reply_tos = params[5] ?? camp.reply_tos;
+        camp.bank_accounts = params[6] ?? camp.bank_accounts;
+        camp.attachment_hashes = params[7] ?? camp.attachment_hashes;
+        camp.last_seen = new Date().toISOString();
       }
     }
     return { rows: [] };
@@ -470,6 +554,26 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
       );
     }
     return { rows: campaigns as unknown as T[] };
+  }
+
+  // Cases selection by id = ANY($1) (campaign cluster queries)
+  if (sql.includes("FROM cases") && sql.includes("WHERE id = ANY($1)")) {
+    const ids = (params?.[0] as string[]) || [];
+    let matching = Array.from(memoryStore.cases.values()).filter(
+      (c: any) => ids.includes(c.id) || ids.includes(c.case_number),
+    );
+    if (sql.includes("campaign_id IS NOT NULL")) {
+      matching = matching.filter((c: any) => c.campaign_id != null);
+    }
+    if (sql.includes("ORDER BY risk_score DESC")) {
+      matching.sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0));
+    } else if (sql.includes("ORDER BY created_at")) {
+      matching.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    }
+    if (sql.includes("LIMIT 1")) {
+      matching = matching.slice(0, 1);
+    }
+    return { rows: matching as unknown as T[] };
   }
 
   // Multi cases selection (campaigns array)
@@ -548,6 +652,70 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
     }
     rows.sort((a, b) => b.match_types - a.match_types);
     return { rows: rows as unknown as T[] };
+  }
+
+  // Behavioral queries in MemoryStore
+  if (sql.includes("evidence->'sender_identity'->>'reply_to'")) {
+    const vendorId = params?.[0];
+    const orgId = params?.[1];
+    const set = new Set<string>();
+    for (const c of memoryStore.cases.values()) {
+      if (c.vendor_id === vendorId || (c as any).vendor === vendorId) {
+        if (orgId && (c as any).org_id && (c as any).org_id !== orgId) continue;
+        const rt = (c.evidence as any)?.sender_identity?.reply_to;
+        if (rt) set.add(rt);
+      }
+    }
+    return { rows: Array.from(set).map((reply_to) => ({ reply_to })) as unknown as T[] };
+  }
+
+  if (sql.includes("SELECT body_preview FROM cases")) {
+    const vendorId = params?.[0];
+    const orgId = params?.[1];
+    const matched = Array.from(memoryStore.cases.values())
+      .filter((c: any) => {
+        if (c.vendor_id !== vendorId && c.vendor !== vendorId && c.vendor_name !== vendorId)
+          return false;
+        if (orgId && (c as any).org_id && (c as any).org_id !== orgId) return false;
+        return Boolean(c.body_preview);
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 10)
+      .map((c) => ({ body_preview: c.body_preview }));
+    return { rows: matched as unknown as T[] };
+  }
+
+  if (sql.includes("send_hour") || sql.includes("EXTRACT(HOUR FROM created_at)")) {
+    const vendorId = params?.[0];
+    const orgId = params?.[1];
+    const matched = Array.from(memoryStore.cases.values())
+      .filter((c: any) => {
+        if (c.vendor_id !== vendorId && c.vendor !== vendorId && c.vendor_name !== vendorId)
+          return false;
+        if (orgId && (c as any).org_id && (c as any).org_id !== orgId) return false;
+        return Boolean(c.created_at);
+      })
+      .map((c) => ({ send_hour: new Date(c.created_at).getUTCHours() }));
+    return { rows: matched as unknown as T[] };
+  }
+
+  // Users & Organizations emulation in MemoryStore
+  if (sql.includes("FROM users u") && sql.includes("JOIN organizations o")) {
+    const email = params?.[0]?.toLowerCase();
+    const defaultUser = {
+      id: "00000000-0000-0000-0000-000000000002",
+      org_id: "00000000-0000-0000-0000-000000000001",
+      email: "security-admin@sentinelmail.io",
+      name: "Security Admin",
+      role: "admin",
+      org_name: "Sentinel Corporation",
+      org_slug: "sentinel-corp",
+      org_plan: "enterprise",
+    };
+    if (email === "security-admin@sentinelmail.io") {
+      return { rows: [defaultUser] as unknown as T[] };
+    }
+    return { rows: [] };
   }
 
   // Fallback default
@@ -793,13 +961,17 @@ async function executeMongoQuery<T>(
   }
 
   // 7. Select cases filtered by vendor or case_numbers
-  if (sql.includes("FROM cases WHERE vendor_id = $1")) {
+  if (
+    sql.includes("FROM cases WHERE vendor_id = $1") &&
+    !sql.includes("SELECT body_preview") &&
+    !sql.includes("send_hour") &&
+    !sql.includes("EXTRACT(HOUR")
+  ) {
     const vendorId = params?.[0];
-    const docs = await cols.cases
-      .find({ vendor_id: vendorId })
-      .sort({ created_at: -1 })
-      .limit(20)
-      .toArray();
+    const orgId = sql.includes("org_id = $2") ? params?.[1] : undefined;
+    const filter: any = { vendor_id: vendorId };
+    if (orgId) filter.org_id = orgId;
+    const docs = await cols.cases.find(filter).sort({ created_at: -1 }).limit(20).toArray();
     return docs.map((d) => ({
       id: d.id,
       body_preview: d.body_preview,
@@ -942,8 +1114,39 @@ async function executeMongoQuery<T>(
     return [];
   }
 
+  // Cases selection by id = ANY($1) (campaign cluster queries)
+  if (sql.includes("FROM cases") && sql.includes("WHERE id = ANY($1)")) {
+    const ids: string[] = params?.[0] ?? [];
+    const filter: any = {
+      $or: [{ id: { $in: ids } }, { _id: { $in: ids } }, { case_number: { $in: ids } }],
+    };
+    if (sql.includes("campaign_id IS NOT NULL")) {
+      filter.campaign_id = { $ne: null, $exists: true };
+    }
+    let cursor = cols.cases.find(filter);
+    if (sql.includes("ORDER BY risk_score DESC")) {
+      cursor = cursor.sort({ risk_score: -1 });
+    } else if (sql.includes("ORDER BY created_at")) {
+      cursor = cursor.sort({ created_at: 1 });
+    }
+    if (sql.includes("LIMIT 1")) {
+      cursor = cursor.limit(1);
+    }
+    const docs = await cursor.toArray();
+    return docs as unknown as T[];
+  }
+
   // 11. Campaigns
-  if (sql.startsWith("SELECT * FROM campaigns")) {
+  if (sql.includes("FROM campaigns") && sql.includes("WHERE id = $1")) {
+    const filter: any = { $or: [{ id: params?.[0] }, { _id: params?.[0] }] };
+    if (sql.includes("org_id = $2")) {
+      filter.org_id = params?.[1];
+    }
+    const camp = await cols.campaigns.findOne(filter);
+    return camp ? ([camp] as unknown as T[]) : [];
+  }
+
+  if (sql.includes("FROM campaigns")) {
     const filter: any = {};
     if (sql.includes("WHERE org_id = $1")) {
       filter.org_id = params?.[0];
@@ -952,19 +1155,11 @@ async function executeMongoQuery<T>(
     return camps as unknown as T[];
   }
 
-  if (sql.includes("FROM campaigns WHERE id = $1")) {
-    const filter: any = { id: params?.[0] };
-    if (sql.includes("org_id = $2")) {
-      filter.org_id = params?.[1];
-    }
-    const camp = await cols.campaigns.findOne(filter);
-    return camp ? ([camp] as unknown as T[]) : [];
-  }
-
   if (sql.startsWith("INSERT INTO campaigns")) {
     if (params) {
       const [
         id,
+        org_id,
         name,
         severity,
         shared_indicators,
@@ -977,9 +1172,10 @@ async function executeMongoQuery<T>(
         recommended_actions,
       ] = params;
 
-      const campDoc: Campaign & { _id: string } = {
+      const campDoc: Campaign & { _id: string; org_id: string } = {
         _id: id,
         id,
+        org_id: org_id || "00000000-0000-0000-0000-000000000001",
         name,
         severity,
         case_count: Number(case_count),
@@ -1026,6 +1222,7 @@ async function executeMongoQuery<T>(
   // 12. Indicators correlation query in campaign.ts
   if (sql.includes("FROM indicators i1") && sql.includes("JOIN indicators i2")) {
     const currentCaseId = params?.[0];
+    const targetOrgId = params?.[1];
     const currentIndicators = await cols.indicators.find({ case_id: currentCaseId }).toArray();
     if (currentIndicators.length === 0) return [];
 
@@ -1040,6 +1237,14 @@ async function executeMongoQuery<T>(
         .toArray();
 
       for (const m of matches) {
+        if (targetOrgId) {
+          const otherCase = await cols.cases.findOne({
+            $or: [{ id: m.case_id }, { _id: m.case_id }],
+          });
+          if (otherCase && (otherCase as any).org_id && (otherCase as any).org_id !== targetOrgId) {
+            continue;
+          }
+        }
         if (!otherCaseMatches.has(m.case_id)) {
           otherCaseMatches.set(m.case_id, new Set());
         }
@@ -1076,13 +1281,61 @@ async function executeMongoQuery<T>(
     return [];
   }
 
-  // 14. Behavioral checks queries
+  // 14. Behavioral checks queries in MongoDB
   if (sql.includes("evidence->'sender_identity'->>'reply_to'")) {
     const vendorId = params?.[0];
-    const replyTos = await cols.cases.distinct("evidence.sender_identity.reply_to", {
-      vendor_id: vendorId,
-    });
+    const orgId = params?.[1];
+    const filter: any = {
+      $or: [{ vendor_id: vendorId }, { vendor: vendorId }, { vendor_name: vendorId }],
+    };
+    if (orgId) filter.org_id = orgId;
+    const replyTos = await cols.cases.distinct("evidence.sender_identity.reply_to", filter);
     return replyTos.filter(Boolean).map((r) => ({ reply_to: r })) as unknown as T[];
+  }
+
+  if (sql.includes("SELECT body_preview FROM cases")) {
+    const vendorId = params?.[0];
+    const orgId = params?.[1];
+    const filter: any = {
+      $or: [{ vendor_id: vendorId }, { vendor: vendorId }, { vendor_name: vendorId }],
+      body_preview: { $ne: null, $exists: true },
+    };
+    if (orgId) filter.org_id = orgId;
+    const docs = await cols.cases.find(filter).sort({ created_at: -1 }).limit(10).toArray();
+    return docs.map((d) => ({ body_preview: d.body_preview })) as unknown as T[];
+  }
+
+  if (sql.includes("send_hour") || sql.includes("EXTRACT(HOUR FROM created_at)")) {
+    const vendorId = params?.[0];
+    const orgId = params?.[1];
+    const filter: any = {
+      $or: [{ vendor_id: vendorId }, { vendor: vendorId }, { vendor_name: vendorId }],
+    };
+    if (orgId) filter.org_id = orgId;
+    const docs = await cols.cases.find(filter).toArray();
+    return docs.map((d) => ({
+      send_hour: new Date(d.created_at).getUTCHours(),
+    })) as unknown as T[];
+  }
+
+  // 15. User + Org emulation in MongoDB
+  if (sql.includes("FROM users u") && sql.includes("JOIN organizations o")) {
+    const email = params?.[0]?.toLowerCase();
+    const user = await cols.users.findOne({ email });
+    if (!user) return [];
+    const org = await cols.organizations.findOne({ id: user.org_id });
+    return [
+      {
+        id: user.id,
+        org_id: user.org_id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        org_name: org?.name ?? "Sentinel Corporation",
+        org_slug: org?.slug ?? "sentinel-corp",
+        org_plan: org?.plan ?? "enterprise",
+      },
+    ] as unknown as T[];
   }
 
   // If no specific MongoDB mapping, return null to fall through

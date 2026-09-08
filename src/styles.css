@@ -580,3 +580,228 @@ html {
 .delay-4 {
   animation-delay: 0.48s;
 }
+
+/* ==========================================================================
+   TACTILE INTERACTIVE BUTTON ANIMATIONS
+   Micro-interactions inspired by Linear / Ramp / Stripe press physics.
+   ========================================================================== */
+
+/* Primary action buttons — lift + glow on hover, press-down on active */
+.btn-tactile {
+  position: relative;
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.25s ease,
+    filter 0.2s ease;
+  will-change: transform;
+}
+
+.btn-tactile:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 25px -5px rgba(56, 189, 248, 0.25),
+    0 4px 10px -3px rgba(56, 189, 248, 0.1);
+}
+
+.btn-tactile:active {
+  transform: translateY(0.5px) scale(0.98);
+  box-shadow: 0 2px 6px -2px rgba(56, 189, 248, 0.15);
+  transition-duration: 0.08s;
+}
+
+/* Destructive variant (Hold Payment, etc.) */
+.btn-tactile-destructive {
+  position: relative;
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.25s ease,
+    filter 0.2s ease;
+  will-change: transform;
+}
+
+.btn-tactile-destructive:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 25px -5px rgba(244, 63, 94, 0.3),
+    0 4px 10px -3px rgba(244, 63, 94, 0.15);
+}
+
+.btn-tactile-destructive:active {
+  transform: translateY(0.5px) scale(0.98);
+  box-shadow: 0 2px 6px -2px rgba(244, 63, 94, 0.2);
+  transition-duration: 0.08s;
+}
+
+/* Ghost/outlined buttons — subtle lift + border glow */
+.btn-tactile-ghost {
+  position: relative;
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    background-color 0.15s ease;
+  will-change: transform;
+}
+
+.btn-tactile-ghost:hover {
+  transform: translateY(-1.5px);
+  border-color: var(--primary);
+  box-shadow:
+    0 6px 20px -6px rgba(56, 189, 248, 0.15),
+    0 0 0 1px rgba(56, 189, 248, 0.2);
+}
+
+.btn-tactile-ghost:active {
+  transform: translateY(0px) scale(0.98);
+  transition-duration: 0.06s;
+}
+
+/* ==========================================================================
+   ANIMATED GRADIENT BORDER SWEEP (Shimmer on cards/panels)
+   ========================================================================== */
+
+@keyframes border-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.gradient-border-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    transparent 30%,
+    rgba(56, 189, 248, 0.35) 50%,
+    transparent 70%
+  );
+  background-size: 300% 300%;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.gradient-border-card:hover::before {
+  opacity: 1;
+  animation: border-shimmer 3s ease infinite;
+}
+
+/* ==========================================================================
+   PANEL HOVER LIFT
+   Applies a subtle lift + shadow to .panel elements on hover.
+   ========================================================================== */
+
+.panel {
+  transition:
+    transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.3s ease,
+    border-color 0.3s ease;
+}
+
+.panel:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* ==========================================================================
+   PULSING LIVE INDICATOR DOT
+   ========================================================================== */
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  50% {
+    opacity: 0.8;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+.live-dot {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   DROP ZONE BREATHING ANIMATION
+   ========================================================================== */
+
+@keyframes dropzone-breathe {
+  0%,
+  100% {
+    border-color: var(--border);
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+  50% {
+    border-color: var(--primary);
+    box-shadow: inset 0 0 30px -15px rgba(56, 189, 248, 0.08);
+  }
+}
+
+.dropzone-idle {
+  animation: dropzone-breathe 4s ease-in-out infinite;
+}
+
+.dropzone-idle:hover {
+  animation: none;
+  border-color: var(--primary);
+  box-shadow: inset 0 0 40px -15px rgba(56, 189, 248, 0.12);
+}
+
+/* ==========================================================================
+   TABLE ROW HOVER SLIDE
+   ========================================================================== */
+
+.table-row-interactive {
+  transition:
+    background-color 0.15s ease,
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.table-row-interactive:hover {
+  transform: translateX(3px);
+}
+
+/* ==========================================================================
+   SCENARIO CARD SELECTION GLOW
+   ========================================================================== */
+
+.scenario-card {
+  position: relative;
+  transition:
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.scenario-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 25px -8px rgba(56, 189, 248, 0.2),
+    0 0 0 1px var(--primary);
+}
+
+.scenario-card[data-active="true"] {
+  border-color: var(--primary);
+  box-shadow:
+    0 0 0 1px var(--primary),
+    0 0 20px -5px rgba(56, 189, 248, 0.25);
+}

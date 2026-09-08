@@ -113,7 +113,7 @@ function CasesPage() {
                 cases.length === 0 ? (
                   <Link
                     to="/analyze"
-                    className="inline-flex items-center rounded-xl bg-primary hover:bg-primary/90 px-3.5 py-2 text-[12px] font-semibold text-primary-foreground shadow-sm transition-all duration-150 hover:-translate-y-0.5"
+                    className="btn-tactile inline-flex items-center rounded-xl bg-primary hover:bg-primary/90 px-3.5 py-2 text-[12px] font-semibold text-primary-foreground shadow-sm"
                   >
                     Analyze email
                   </Link>

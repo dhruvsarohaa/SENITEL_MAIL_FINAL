@@ -1,5 +1,30 @@
 export type Severity = "critical" | "high" | "medium" | "low" | "safe";
 
+export type OriginAssessmentType =
+  | "Spoofed Domain"
+  | "Likely Compromised Account"
+  | "Likely Anonymized Infrastructure"
+  | "Likely Malicious Infrastructure"
+  | "Insufficient Evidence";
+
+export interface OriginAssessment {
+  assessment: OriginAssessmentType;
+  confidence: number;
+  reasons: string[];
+}
+
+export interface DomainIntelligence {
+  domain: string;
+  a_records: string[];
+  aaaa_records: string[];
+  mx_records: string[];
+  ns_records: string[];
+  registrar?: string;
+  creation_date?: string;
+  expiration_date?: string;
+  age_days?: number;
+}
+
 export type ThreatClass =
   "invoice_fraud" | "ceo_impersonation" | "credential_phishing" | "malware_delivery" | "benign";
 
@@ -27,10 +52,21 @@ export interface RelayHop {
   ip: string;
   asn?: string;
   country?: string;
+  countryCode?: string;
+  region?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  timezone?: string;
+  isp?: string;
+  organization?: string;
   timestamp?: string;
   suspicious?: boolean;
+  isHosting?: boolean;
+  isVpn?: boolean;
+  isProxy?: boolean;
+  isTor?: boolean;
 }
-
 export interface EvidenceSignal {
   label: string;
   detail?: string;
@@ -52,6 +88,7 @@ export interface Evidence {
     auth: AuthResult;
     trusted_vendor?: string;
     vendor_domain_match?: boolean;
+    domain_alignment?: string;
     notes?: EvidenceSignal[];
   };
   financial: {
@@ -74,6 +111,9 @@ export interface Evidence {
       sha256?: string;
       suspicious?: boolean;
     }[];
+  };
+  behavioral?: {
+    flags: string[];
   };
   /** Known-good relationship signals used to detect a compromised, genuine sender. */
   vendor_relationship?: {
@@ -131,6 +171,8 @@ export interface CaseSummary {
 export interface Case extends CaseSummary {
   confidence: number;
   decision_banner: string;
+  origin_assessment?: OriginAssessment;
+  domain_intelligence?: DomainIntelligence[];
   recipients?: string[];
   body_preview?: string;
   evidence: Evidence;

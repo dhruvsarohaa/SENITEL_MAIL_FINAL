@@ -27,6 +27,8 @@ import { api } from "@/lib/api";
 import { formatDateTime, relativeTime } from "@/lib/format";
 import type { VendorProfile } from "@/types/sentinel";
 import { cn } from "@/lib/utils";
+import { TiltCard } from "@/components/TiltCard";
+import { AnimatedCounter } from "@/components/AnimatedCounter";
 
 export const Route = createFileRoute("/vendors")({
   head: () => ({
@@ -63,6 +65,7 @@ function VendorsPage() {
   const vendors = query.data?.data ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [editingVendor, setEditingVendor] = useState<VendorProfile | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
@@ -77,6 +80,20 @@ function VendorsPage() {
     },
     onError: (err: unknown) =>
       toast.error("Could not create vendor", {
+        description: err instanceof Error ? err.message : undefined,
+      }),
+  });
+
+  const updateVendor = useMutation({
+    mutationFn: ({ id, profile }: { id: string; profile: Partial<VendorProfile> }) =>
+      api.updateVendor(id, profile),
+    onSuccess: () => {
+      toast.success("Vendor profile updated successfully");
+      setEditingVendor(null);
+      qc.invalidateQueries({ queryKey: ["vendors"] });
+    },
+    onError: (err: unknown) =>
+      toast.error("Could not update vendor profile", {
         description: err instanceof Error ? err.message : undefined,
       }),
   });
@@ -126,7 +143,7 @@ function VendorsPage() {
           <button
             type="button"
             onClick={() => setShowForm(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+            className="btn-tactile inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 cursor-pointer"
           >
             <Plus className="size-4" aria-hidden />
             Register Supplier Profile
@@ -136,7 +153,11 @@ function VendorsPage() {
 
       {/* KPI METRIC STRIP */}
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div className="panel p-5 flex flex-col justify-between">
+        <TiltCard
+          className="gradient-border-card rounded-2xl p-5 flex flex-col justify-between"
+          glow
+          maxAngle={7}
+        >
           <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             <span>Registered Suppliers</span>
             <span className="rounded bg-safe/10 px-2 py-0.5 text-xs font-semibold text-safe">
@@ -145,15 +166,19 @@ function VendorsPage() {
           </div>
           <div className="mt-3">
             <p className="font-mono text-2xl font-bold tracking-tight text-foreground">
-              {vendors.length}
+              <AnimatedCounter value={vendors.length} />
             </p>
             <p className="mt-1 text-xs text-muted-foreground font-medium">
               Monitored supplier baselines
             </p>
           </div>
-        </div>
+        </TiltCard>
 
-        <div className="panel p-5 flex flex-col justify-between">
+        <TiltCard
+          className="gradient-border-card rounded-2xl p-5 flex flex-col justify-between"
+          glow
+          maxAngle={7}
+        >
           <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             <span>Approved Bank Suffixes</span>
             <span className="rounded bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
@@ -162,15 +187,19 @@ function VendorsPage() {
           </div>
           <div className="mt-3">
             <p className="font-mono text-2xl font-bold tracking-tight text-foreground">
-              {totalApprovedSuffixes}
+              <AnimatedCounter value={totalApprovedSuffixes} />
             </p>
             <p className="mt-1 text-xs text-muted-foreground font-medium">
               Verified payout accounts
             </p>
           </div>
-        </div>
+        </TiltCard>
 
-        <div className="panel p-5 flex flex-col justify-between">
+        <TiltCard
+          className="gradient-border-card rounded-2xl p-5 flex flex-col justify-between"
+          glow
+          maxAngle={7}
+        >
           <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             <span>Active Watchlist</span>
             <span
@@ -186,15 +215,19 @@ function VendorsPage() {
           </div>
           <div className="mt-3">
             <p className="font-mono text-2xl font-bold tracking-tight text-foreground">
-              {watchCount}
+              <AnimatedCounter value={watchCount} />
             </p>
             <p className="mt-1 text-xs text-muted-foreground font-medium">
               Heightened scrutiny profiles
             </p>
           </div>
-        </div>
+        </TiltCard>
 
-        <div className="panel p-5 flex flex-col justify-between">
+        <TiltCard
+          className="gradient-border-card rounded-2xl p-5 flex flex-col justify-between"
+          glow
+          maxAngle={7}
+        >
           <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             <span>Remittance Gate</span>
             <span className="rounded bg-safe/10 px-2 py-0.5 text-xs font-semibold text-safe">
@@ -203,9 +236,12 @@ function VendorsPage() {
           </div>
           <div className="mt-3">
             <p className="text-base font-bold text-foreground truncate">Continuous Audit</p>
-            <p className="mt-1 text-xs text-safe font-medium">Automatic hold on bank change</p>
+            <p className="mt-1 text-xs text-safe font-medium flex items-center gap-1">
+              <span className="size-1.5 rounded-full bg-safe live-dot" />
+              Automatic hold on bank change
+            </p>
           </div>
-        </div>
+        </TiltCard>
       </div>
 
       {query.isError && <ConnectionNotice error={query.error} onRetry={() => query.refetch()} />}
@@ -344,7 +380,11 @@ function VendorsPage() {
         <aside>
           <div className="panel sticky top-[84px] p-5 shadow-xs">
             {selected ? (
-              <VendorDetail vendor={selected} onAddNew={() => setShowForm(true)} />
+              <VendorDetail
+                vendor={selected}
+                onAddNew={() => setShowForm(true)}
+                onEdit={(v) => setEditingVendor(v)}
+              />
             ) : (
               <DirectoryOverview totalVendors={vendors.length} onAddNew={() => setShowForm(true)} />
             )}
@@ -357,6 +397,15 @@ function VendorsPage() {
           pending={createVendor.isPending}
           onClose={() => setShowForm(false)}
           onSubmit={(v) => createVendor.mutate(v)}
+        />
+      )}
+
+      {editingVendor && (
+        <VendorModal
+          initialVendor={editingVendor}
+          pending={updateVendor.isPending}
+          onClose={() => setEditingVendor(null)}
+          onSubmit={(v) => updateVendor.mutate({ id: editingVendor.id, profile: v })}
         />
       )}
     </AppShell>
@@ -433,7 +482,15 @@ function DirectoryOverview({
   );
 }
 
-function VendorDetail({ vendor, onAddNew }: { vendor: VendorProfile; onAddNew: () => void }) {
+function VendorDetail({
+  vendor,
+  onAddNew,
+  onEdit,
+}: {
+  vendor: VendorProfile;
+  onAddNew: () => void;
+  onEdit: (vendor: VendorProfile) => void;
+}) {
   const risk = (vendor.risk_state as keyof typeof riskStyles) ?? "trusted";
 
   return (
@@ -448,11 +505,23 @@ function VendorDetail({ vendor, onAddNew }: { vendor: VendorProfile; onAddNew: (
                 : "Baseline supplier record"}
             </p>
           </div>
-          <span
-            className={cn("rounded-md border px-2.5 py-1 text-xs font-semibold", riskStyles[risk])}
-          >
-            {riskLabels[risk]}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onEdit(vendor)}
+              className="rounded-md border border-border bg-secondary px-2 py-1 text-xs font-semibold text-foreground hover:bg-card cursor-pointer"
+            >
+              Edit Baseline
+            </button>
+            <span
+              className={cn(
+                "rounded-md border px-2.5 py-1 text-xs font-semibold",
+                riskStyles[risk],
+              )}
+            >
+              {riskLabels[risk]}
+            </span>
+          </div>
         </div>
       </header>
 
@@ -547,18 +616,20 @@ function Block({
 }
 
 function VendorModal({
+  initialVendor,
   onClose,
   onSubmit,
   pending,
 }: {
+  initialVendor?: VendorProfile | null;
   onClose: () => void;
   onSubmit: (v: Omit<VendorProfile, "id">) => void;
   pending: boolean;
 }) {
-  const [name, setName] = useState("");
-  const [domains, setDomains] = useState("");
-  const [contacts, setContacts] = useState("");
-  const [suffixes, setSuffixes] = useState("");
+  const [name, setName] = useState(initialVendor?.name ?? "");
+  const [domains, setDomains] = useState(initialVendor?.trusted_domains?.join(", ") ?? "");
+  const [contacts, setContacts] = useState(initialVendor?.trusted_contacts?.join(", ") ?? "");
+  const [suffixes, setSuffixes] = useState(initialVendor?.approved_bank_suffixes?.join(", ") ?? "");
 
   const split = (s: string) =>
     s
@@ -577,14 +648,16 @@ function VendorModal({
             trusted_domains: split(domains),
             trusted_contacts: split(contacts),
             approved_bank_suffixes: split(suffixes),
-            normal_recipients: [],
+            normal_recipients: initialVendor?.normal_recipients ?? [],
           });
         }}
         className="panel relative w-full max-w-md p-6 shadow-2xl"
       >
         <div className="flex items-start justify-between border-b border-border pb-3.5">
           <div>
-            <h2 className="text-base font-bold text-foreground">Register Supplier Baseline</h2>
+            <h2 className="text-base font-bold text-foreground">
+              {initialVendor ? "Edit Supplier Baseline" : "Register Supplier Baseline"}
+            </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Configure authorized domains and approved remittance bank suffixes.
             </p>
@@ -640,7 +713,13 @@ function VendorModal({
             disabled={pending || !name.trim()}
             className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 disabled:opacity-45 cursor-pointer"
           >
-            {pending ? "Registering…" : "Register Supplier Profile"}
+            {pending
+              ? initialVendor
+                ? "Saving…"
+                : "Registering…"
+              : initialVendor
+                ? "Save Baseline Changes"
+                : "Register Supplier Profile"}
           </button>
         </div>
       </form>

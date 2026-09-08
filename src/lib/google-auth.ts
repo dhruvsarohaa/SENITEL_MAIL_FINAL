@@ -1,9 +1,4 @@
-
-import {
-  GoogleAuthProvider,
-  signInWithCredential,
-  signOut,
-} from "firebase/auth";
+import { GoogleAuthProvider, signInWithCredential, signOut } from "firebase/auth";
 import { firebaseAuth } from "./firebase";
 
 export type GoogleProfile = {
@@ -50,9 +45,7 @@ declare global {
 
 const GOOGLE_SCRIPT_ID = "google-identity-services";
 
-export const GOOGLE_CLIENT_ID = import.meta.env[
-  "VITE_GOOGLE_CLIENT_ID"
-] as string | undefined;
+export const GOOGLE_CLIENT_ID = import.meta.env["VITE_GOOGLE_CLIENT_ID"] as string | undefined;
 
 export function hasGoogleAuthConfig() {
   return Boolean(GOOGLE_CLIENT_ID);
@@ -60,9 +53,7 @@ export function hasGoogleAuthConfig() {
 
 function loadGoogleIdentity(): Promise<GoogleIdentityApi> {
   if (typeof window === "undefined") {
-    return Promise.reject(
-      new Error("Google sign-in is only available in a browser."),
-    );
+    return Promise.reject(new Error("Google sign-in is only available in a browser."));
   }
 
   if (window.google) {
@@ -70,9 +61,7 @@ function loadGoogleIdentity(): Promise<GoogleIdentityApi> {
   }
 
   return new Promise((resolve, reject) => {
-    const existing = document.getElementById(
-      GOOGLE_SCRIPT_ID,
-    ) as HTMLScriptElement | null;
+    const existing = document.getElementById(GOOGLE_SCRIPT_ID) as HTMLScriptElement | null;
 
     if (existing) {
       existing.addEventListener(
@@ -101,12 +90,9 @@ function loadGoogleIdentity(): Promise<GoogleIdentityApi> {
     script.defer = true;
 
     script.onload = () =>
-      window.google
-        ? resolve(window.google)
-        : reject(new Error("Google sign-in did not load."));
+      window.google ? resolve(window.google) : reject(new Error("Google sign-in did not load."));
 
-    script.onerror = () =>
-      reject(new Error("Google sign-in could not load."));
+    script.onerror = () => reject(new Error("Google sign-in could not load."));
 
     document.head.appendChild(script);
   });
@@ -139,20 +125,14 @@ export async function renderGoogleButton(
            * Firebase then creates the actual authenticated Firebase user
            * session.
            */
-          const googleCredential =
-            GoogleAuthProvider.credential(credential);
+          const googleCredential = GoogleAuthProvider.credential(credential);
 
-          const result = await signInWithCredential(
-            firebaseAuth,
-            googleCredential,
-          );
+          const result = await signInWithCredential(firebaseAuth, googleCredential);
 
           const firebaseUser = result.user;
 
           if (!firebaseUser.email) {
-            throw new Error(
-              "Firebase did not provide an email address.",
-            );
+            throw new Error("Firebase did not provide an email address.");
           }
 
           /*
@@ -170,18 +150,12 @@ export async function renderGoogleButton(
             id: firebaseUser.uid,
             email: firebaseUser.email,
             name: firebaseUser.displayName || firebaseUser.email,
-            ...(firebaseUser.photoURL
-              ? { picture: firebaseUser.photoURL }
-              : {}),
+            ...(firebaseUser.photoURL ? { picture: firebaseUser.photoURL } : {}),
           });
         } catch (error) {
           console.error("Firebase Google sign-in failed:", error);
 
-          onError(
-            error instanceof Error
-              ? error.message
-              : "Could not complete Google sign-in.",
-          );
+          onError(error instanceof Error ? error.message : "Could not complete Google sign-in.");
         }
       },
     });
@@ -198,11 +172,7 @@ export async function renderGoogleButton(
       width: 360,
     });
   } catch (error) {
-    onError(
-      error instanceof Error
-        ? error.message
-        : "Google sign-in could not load.",
-    );
+    onError(error instanceof Error ? error.message : "Google sign-in could not load.");
   }
 }
 
@@ -213,9 +183,6 @@ export async function clearGoogleSession() {
     window.google?.accounts.id.disableAutoSelect();
   }
 }
-
-
-
 
 // export type GoogleProfile = {
 //   id?: string;

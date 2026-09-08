@@ -22,6 +22,7 @@ export async function compareBehavior(params: {
   bankAccountLast4?: string;
   bodyText: string;
   sentAt: Date;
+  orgId?: string;
 }): Promise<BehavioralResult> {
   const result: BehavioralResult = { signals: [], scoreDelta: 0, anomalies: [] };
   if (!params.vendor) return result;
@@ -36,6 +37,7 @@ export async function compareBehavior(params: {
     bankAccountLast4,
     bodyText,
     sentAt,
+    orgId,
   } = params;
 
   // 1. Domain match — is the sender domain in the vendor's trusted list?
@@ -77,8 +79,9 @@ export async function compareBehavior(params: {
     try {
       const pastReplyTos = await pool.query<{ reply_to: string }>(
         `SELECT DISTINCT evidence->'sender_identity'->>'reply_to' AS reply_to
-         FROM cases WHERE vendor_id = $1 AND evidence->'sender_identity'->>'reply_to' IS NOT NULL`,
-        [vendor.id],
+         FROM cases WHERE vendor_id = $1 AND evidence->'sender_identity'->>'reply_to' IS NOT NULL` +
+          (orgId ? ` AND org_id = $2` : ""),
+        orgId ? [vendor.id, orgId] : [vendor.id],
       );
       const knownReplyTos = new Set(pastReplyTos.rows.map((r) => r.reply_to));
       if (knownReplyTos.size > 0 && !knownReplyTos.has(replyTo)) {
@@ -146,8 +149,10 @@ export async function compareBehavior(params: {
   // 6. Writing style — simple TF-IDF cosine similarity against past vendor emails
   try {
     const pastBodies = await pool.query<{ body_preview: string }>(
-      `SELECT body_preview FROM cases WHERE vendor_id = $1 AND body_preview IS NOT NULL ORDER BY created_at DESC LIMIT 10`,
-      [vendor.id],
+      `SELECT body_preview FROM cases WHERE vendor_id = $1 AND body_preview IS NOT NULL` +
+        (orgId ? ` AND org_id = $2` : "") +
+        ` ORDER BY created_at DESC LIMIT 10`,
+      orgId ? [vendor.id, orgId] : [vendor.id],
     );
     if (pastBodies.rows.length >= 2) {
       const pastCorpus = pastBodies.rows.map((r) => r.body_preview).join(" ");
@@ -175,8 +180,9 @@ export async function compareBehavior(params: {
   // 7. Send time — compare hour against vendor's historical pattern
   try {
     const pastHours = await pool.query<{ send_hour: number }>(
-      `SELECT EXTRACT(HOUR FROM created_at)::int AS send_hour FROM cases WHERE vendor_id = $1`,
-      [vendor.id],
+      `SELECT EXTRACT(HOUR FROM created_at)::int AS send_hour FROM cases WHERE vendor_id = $1` +
+        (orgId ? ` AND org_id = $2` : ""),
+      orgId ? [vendor.id, orgId] : [vendor.id],
     );
     if (pastHours.rows.length >= 3) {
       const hours = pastHours.rows.map((r) => r.send_hour);

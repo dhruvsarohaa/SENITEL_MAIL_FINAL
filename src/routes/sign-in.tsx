@@ -4,17 +4,15 @@ import {
   ArrowRight,
   CheckCircle2,
   LockKeyhole,
-  ShieldCheck,
   Zap,
   Sparkles,
   ShieldAlert,
-  Building2,
-  RefreshCw,
   Fingerprint,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { renderGoogleButton } from "@/lib/google-auth";
 import { SentinelLogoIcon } from "@/components/SentinelLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const Route = createFileRoute("/sign-in")({
   component: SignInPage,
@@ -52,9 +50,9 @@ export function SignInPage() {
   };
 
   return (
-    <main className="relative grid min-h-screen w-full bg-[#f8fafc] lg:grid-cols-[1.15fr_0.85fr]">
+    <main className="relative grid min-h-screen w-full bg-background text-foreground lg:grid-cols-[1.15fr_0.85fr]">
       {/* ── LEFT SHOWCASE: Animated Enterprise Threat Intelligence Center ── */}
-      <section className="relative hidden flex-col justify-between overflow-hidden bg-[#090d16] p-10 text-white lg:flex xl:p-14">
+      <section className="relative hidden flex-col justify-between overflow-hidden bg-[#090d16] p-10 text-white lg:flex xl:p-14 border-r border-border/40">
         {/* Ambient background glows */}
         <div className="pointer-events-none absolute -top-40 -left-40 size-[500px] rounded-full bg-blue-600/15 blur-[120px]" />
         <div className="pointer-events-none absolute -bottom-40 right-10 size-[450px] rounded-full bg-emerald-500/10 blur-[140px]" />
@@ -72,7 +70,7 @@ export function SignInPage() {
         {/* Top Header */}
         <div className="relative z-10 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="relative flex size-11 items-center justify-center rounded-xl bg-white border border-slate-200/60 p-2 shadow-md">
+            <span className="relative flex size-11 items-center justify-center rounded-xl bg-slate-900 border border-slate-700/60 p-2 shadow-md">
               <SentinelLogoIcon size="100%" className="w-full h-full object-contain" />
               <span className="absolute -top-1 -right-1 size-2.5 rounded-full bg-emerald-400 ring-2 ring-[#090d16]" />
             </span>
@@ -169,7 +167,7 @@ export function SignInPage() {
           {/* Value Prop Banner */}
           <div className="mx-auto mt-6 max-w-lg text-center">
             <h2 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-              Catch the threats SPF & DKIM cannot see.
+              Catch the threats SPF &amp; DKIM cannot see.
             </h2>
             <p className="mt-2.5 text-[14px] leading-relaxed text-slate-400">
               When genuine vendor accounts are compromised, traditional email filters fail.
@@ -197,117 +195,123 @@ export function SignInPage() {
       </section>
 
       {/* ── RIGHT AUTH PANEL: Modern Enterprise Login ── */}
-      <section className="flex flex-col justify-between p-8 sm:p-12 lg:p-16">
-        <div className="flex items-center justify-between lg:justify-end">
-          <div className="flex items-center gap-2.5 lg:hidden">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-white p-1.5 shadow-sm border border-slate-200/50 shrink-0">
+      <section className="relative flex min-h-screen flex-col justify-between p-6 sm:p-10 lg:p-12 overflow-y-auto">
+        {/* Top Navbar items */}
+        <div className="flex items-center justify-between w-full">
+          <div className="flex items-center gap-2.5">
+            <span className="relative flex size-9 items-center justify-center rounded-xl bg-card border border-border p-1.5 shadow-sm shrink-0">
               <SentinelLogoIcon size="100%" className="w-full h-full object-contain" />
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-500 ring-2 ring-background animate-pulse" />
             </span>
-            <strong className="text-[16px] font-bold tracking-tight text-foreground">
-              SentinelMail
-            </strong>
+            <span className="text-base font-bold tracking-tight text-foreground font-sans">
+              Sentinel<span className="text-primary font-semibold">Mail</span>
+            </span>
           </div>
 
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-            <LockKeyhole className="size-3 text-muted-foreground" />
-            SOC 2 Type II Certified
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-card/60 border border-border/80 px-2.5 py-1 rounded-full backdrop-blur-sm">
+              <LockKeyhole className="size-3 text-emerald-500" />
+              SOC 2 Type II
+            </div>
+            <ThemeToggle />
           </div>
         </div>
 
-        <div className="mx-auto my-auto w-full max-w-[400px] py-8">
-          <div className="mb-4 hidden lg:inline-flex items-center gap-2.5">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-white p-1.5 shadow-sm border border-slate-200/50 shrink-0">
-              <SentinelLogoIcon size="100%" className="w-full h-full object-contain" />
-            </span>
-            <span className="text-xl font-bold tracking-tight text-foreground font-sans">
-              Sentinel<span className="text-muted-foreground font-normal">Mail</span>
-            </span>
-          </div>
-
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11.5px] font-semibold text-primary">
-            <Zap className="size-3.5 fill-primary text-primary" />
-            Enterprise Access Portal
-          </div>
-
-          <h1 className="mt-4 text-3xl font-bold tracking-tight text-foreground">
-            Welcome to SentinelMail
-          </h1>
-          <p className="mt-2 text-[14px] leading-relaxed text-muted-foreground">
-            Sign in with your corporate identity or launch the interactive live evaluation console.
-          </p>
-
-          {/* Quick Launch Demo Workspace Button */}
-          <div className="mt-8">
-            <button
-              type="button"
-              onClick={enterDemoWorkspace}
-              className="group relative flex w-full items-center justify-between overflow-hidden rounded-xl bg-primary px-5 py-3.5 text-left text-primary-foreground shadow-lg transition-all duration-200 hover:bg-primary/90 hover:shadow-xl active:scale-[0.99]"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex size-8 items-center justify-center rounded-lg bg-white/15 text-white transition-transform group-hover:scale-110">
-                  <Sparkles className="size-4 text-sky-300" />
-                </span>
-                <div>
-                  <p className="text-[13px] font-semibold text-primary-foreground">
-                    Open Live Investigation Workspace
-                  </p>
-                  <p className="text-[11px] text-primary-foreground/80">
-                    One-click evaluation access with pre-seeded telemetry
-                  </p>
-                </div>
-              </div>
-              <ArrowRight className="size-4 text-primary-foreground/70 transition-transform group-hover:translate-x-1 group-hover:text-primary-foreground" />
-            </button>
-          </div>
-
-          <div className="relative my-7">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border" />
+        {/* Centered Auth Card */}
+        <div className="mx-auto my-auto w-full max-w-[440px] py-8">
+          <div className="rounded-2xl border border-border/90 bg-card/90 p-7 sm:p-9 shadow-2xl backdrop-blur-xl">
+            {/* Header Badge */}
+            <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+              <Zap className="size-3.5 fill-primary text-primary" />
+              Enterprise Access Portal
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-3 font-semibold text-muted-foreground">
-                or corporate identity
-              </span>
-            </div>
-          </div>
 
-          {/* Google Workspace Auth Container */}
-          <div className="min-h-[44px]" ref={buttonRef} />
-
-          {!isConfigured && (
-            <div className="mt-4 rounded-xl border border-border bg-card p-3.5 text-[12px] leading-relaxed text-muted-foreground shadow-sm">
-              <p className="font-semibold text-foreground">Ready for Google Workspace SSO</p>
-              <p className="mt-0.5 text-muted-foreground">
-                Configure{" "}
-                <code className="font-mono text-[11px] text-foreground">VITE_GOOGLE_CLIENT_ID</code>{" "}
-                in environment to enable production Google SSO.
-              </p>
-            </div>
-          )}
-
-          {error && (
-            <p className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-[12px] text-destructive font-medium">
-              {error}
+            <h1 className="mt-4 text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+              Welcome to SentinelMail
+            </h1>
+            <p className="mt-2 text-xs sm:text-sm leading-relaxed text-muted-foreground">
+              Sign in with your corporate identity or launch the interactive live evaluation
+              console.
             </p>
-          )}
 
-          <div className="mt-8 space-y-2 border-t border-border pt-6">
-            <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
-              <CheckCircle2 className="size-3.5 text-safe shrink-0" />
-              <span>Microsoft 365 & Google Workspace Mailbox Ingestion</span>
+            {/* Quick Launch Demo Workspace Button */}
+            <div className="mt-6">
+              <button
+                type="button"
+                onClick={enterDemoWorkspace}
+                className="group relative flex w-full items-center justify-between overflow-hidden rounded-xl bg-primary px-5 py-4 text-left text-primary-foreground shadow-lg transition-all duration-200 hover:bg-primary/90 hover:shadow-xl hover:ring-2 hover:ring-primary/40 active:scale-[0.99] cursor-pointer"
+              >
+                <div className="flex items-center gap-3.5">
+                  <span className="flex size-9 items-center justify-center rounded-lg bg-white/20 text-white transition-transform group-hover:scale-110">
+                    <Sparkles className="size-4.5 text-white" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-primary-foreground leading-snug">
+                      Open Live Investigation Workspace
+                    </p>
+                    <p className="text-[11px] text-primary-foreground/80 leading-snug">
+                      One-click evaluation access with pre-seeded telemetry
+                    </p>
+                  </div>
+                </div>
+                <ArrowRight className="size-4 text-primary-foreground/80 transition-transform group-hover:translate-x-1 group-hover:text-primary-foreground shrink-0" />
+              </button>
             </div>
-            <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
-              <CheckCircle2 className="size-3.5 text-safe shrink-0" />
-              <span>Multi-Tenant Row-Level Isolation (SOC 2 Type II)</span>
+
+            {/* Divider */}
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-[11px] uppercase tracking-wider">
+                <span className="bg-card px-3 font-semibold text-muted-foreground">
+                  or corporate identity
+                </span>
+              </div>
             </div>
-            <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
-              <CheckCircle2 className="size-3.5 text-safe shrink-0" />
-              <span>Real-Time Autonomous Payment Hold Automation</span>
+
+            {/* Google Workspace Auth Container */}
+            <div className="flex justify-center min-h-[44px] w-full" ref={buttonRef} />
+
+            {!isConfigured && (
+              <div className="mt-4 rounded-xl border border-border/80 bg-background/50 p-3.5 text-xs leading-relaxed text-muted-foreground">
+                <p className="font-semibold text-foreground">Ready for Google Workspace SSO</p>
+                <p className="mt-0.5 text-muted-foreground text-[11.5px]">
+                  Configure{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
+                    VITE_GOOGLE_CLIENT_ID
+                  </code>{" "}
+                  in environment to enable production Google SSO.
+                </p>
+              </div>
+            )}
+
+            {error && (
+              <p className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive font-medium">
+                {error}
+              </p>
+            )}
+
+            {/* Trust & Compliance checklist */}
+            <div className="mt-6 space-y-2.5 border-t border-border/80 pt-5">
+              <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
+                <CheckCircle2 className="size-3.5 text-safe shrink-0" />
+                <span>Microsoft 365 &amp; Google Workspace Mailbox Ingestion</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
+                <CheckCircle2 className="size-3.5 text-safe shrink-0" />
+                <span>Multi-Tenant Row-Level Isolation (SOC 2 Type II)</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
+                <CheckCircle2 className="size-3.5 text-safe shrink-0" />
+                <span>Real-Time Autonomous Payment Hold Automation</span>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="border-t border-border pt-4 text-center sm:text-left">
+        {/* Footer */}
+        <div className="pt-4 text-center">
           <p className="text-[11px] text-muted-foreground">
             SentinelMail Platform v2.4 Enterprise • Confidential Finance Protection Operations
           </p>

@@ -448,7 +448,7 @@ function AnalyzePage() {
               <button
                 type="button"
                 onClick={() => loadScenario(ATTACK_SCENARIOS[0]!)}
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-destructive hover:bg-destructive/90 px-4 py-2.5 text-xs font-bold text-destructive-foreground shadow-sm transition-all duration-150 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+                className="btn-tactile-destructive inline-flex shrink-0 items-center gap-2 rounded-xl bg-destructive hover:bg-destructive/90 px-4 py-2.5 text-xs font-bold text-destructive-foreground shadow-sm cursor-pointer"
               >
                 <Sparkles className="size-3.5 text-amber-300" />
                 1-Click Load &amp; Test Case 2
@@ -478,7 +478,7 @@ function AnalyzePage() {
                 "flex h-[280px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 text-center transition-all duration-150 relative overflow-hidden",
                 dragging
                   ? "border-primary bg-primary/5"
-                  : "border-border bg-secondary/50 hover:border-primary/50 hover:bg-secondary",
+                  : "dropzone-idle border-border bg-secondary/50 hover:border-primary/50 hover:bg-secondary",
               )}
             >
               <span className="mb-4 flex size-13 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
@@ -583,7 +583,7 @@ function AnalyzePage() {
                   type="button"
                   onClick={runAnalysis}
                   disabled={!file || running}
-                  className="inline-flex h-[42px] items-center justify-center gap-2 rounded-xl bg-primary hover:bg-primary/90 px-6 text-xs font-bold text-primary-foreground shadow-sm transition-all duration-150 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-45 disabled:pointer-events-none cursor-pointer"
+                  className="btn-tactile inline-flex h-[42px] items-center justify-center gap-2 rounded-xl bg-primary hover:bg-primary/90 px-6 text-xs font-bold text-primary-foreground shadow-sm disabled:opacity-45 disabled:pointer-events-none cursor-pointer"
                 >
                   {running ? (
                     <>

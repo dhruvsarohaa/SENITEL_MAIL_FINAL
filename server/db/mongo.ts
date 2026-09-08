@@ -6,6 +6,52 @@ export let isMongoActive = false;
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
+export interface OrganizationDoc {
+  _id?: string;
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  settings?: any;
+  created_at: string;
+}
+
+export interface UserDoc {
+  _id?: string;
+  id: string;
+  org_id: string;
+  email: string;
+  name: string;
+  role: string;
+  created_at: string;
+}
+
+export interface ApiKeyDoc {
+  _id?: string;
+  id: string;
+  org_id: string;
+  name: string;
+  prefix: string;
+  key_hash: string;
+  role: string;
+  created_at: string;
+  last_used?: string | null;
+}
+
+export interface MailboxConnectorDoc {
+  _id?: string;
+  id: string;
+  org_id: string;
+  provider: string;
+  name: string;
+  mailbox: string;
+  status: string;
+  config: any;
+  messages_synced: number;
+  last_sync_at?: string;
+  created_at: string;
+}
+
 export interface MongoCollections {
   cases: Collection<
     Case & {
@@ -34,6 +80,10 @@ export interface MongoCollections {
     created_at: Date;
   }>;
   counters: Collection<{ _id: string; seq: number }>;
+  organizations: Collection<OrganizationDoc>;
+  users: Collection<UserDoc>;
+  api_keys: Collection<ApiKeyDoc>;
+  mailbox_connectors: Collection<MailboxConnectorDoc>;
 }
 
 let collections: MongoCollections | null = null;
@@ -44,6 +94,50 @@ export function getMongoDb(): Db | null {
 
 export function getCollections(): MongoCollections | null {
   return collections;
+}
+
+let reconnectTimer: NodeJS.Timeout | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
+function scheduleReconnect(uri: string, dbName: string) {
+  if (reconnectTimer || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
+  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+  reconnectAttempts++;
+  console.log(
+    `[MongoDB] Scheduling reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms...`,
+  );
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try {
+      const reconnected = await initMongoDb();
+      if (reconnected) {
+        reconnectAttempts = 0;
+        console.log("[MongoDB] Reconnection successful.");
+      }
+    } catch (err) {
+      console.warn("[MongoDB] Reconnection attempt failed:", err);
+      scheduleReconnect(uri, dbName);
+    }
+  }, delay);
+}
+
+function registerMongoEvents(mongoClient: MongoClient, uri: string, dbName: string) {
+  mongoClient.on("close", () => {
+    console.warn("⚠️ [MongoDB] Connection closed.");
+    isMongoActive = false;
+    scheduleReconnect(uri, dbName);
+  });
+
+  mongoClient.on("error", (err) => {
+    console.error("⚠️ [MongoDB] Connection error:", err);
+    isMongoActive = false;
+  });
+
+  mongoClient.on("timeout", () => {
+    console.warn("⚠️ [MongoDB] Connection timed out.");
+    isMongoActive = false;
+  });
 }
 
 /**
@@ -65,6 +159,8 @@ export async function initMongoDb(): Promise<boolean> {
       connectTimeoutMS: 4000,
     });
 
+    registerMongoEvents(mongoClient, uri, dbName);
+
     await mongoClient.connect();
     client = mongoClient;
     db = client.db(dbName);
@@ -76,6 +172,10 @@ export async function initMongoDb(): Promise<boolean> {
       indicators: db.collection("indicators"),
       actions: db.collection("actions"),
       counters: db.collection("counters"),
+      organizations: db.collection("organizations"),
+      users: db.collection("users"),
+      api_keys: db.collection("api_keys"),
+      mailbox_connectors: db.collection("mailbox_connectors"),
     };
 
     isMongoActive = true;
@@ -124,6 +224,17 @@ async function ensureIndexes() {
 
       collections.actions.createIndex({ case_id: 1 }),
       collections.actions.createIndex({ created_at: 1 }),
+
+      collections.organizations.createIndex({ id: 1 }, { unique: true }),
+      collections.organizations.createIndex({ slug: 1 }, { unique: true }),
+      collections.users.createIndex({ id: 1 }, { unique: true }),
+      collections.users.createIndex({ email: 1 }, { unique: true }),
+      collections.users.createIndex({ org_id: 1 }),
+      collections.api_keys.createIndex({ id: 1 }, { unique: true }),
+      collections.api_keys.createIndex({ key_hash: 1 }, { unique: true }),
+      collections.api_keys.createIndex({ org_id: 1 }),
+      collections.mailbox_connectors.createIndex({ id: 1 }, { unique: true }),
+      collections.mailbox_connectors.createIndex({ org_id: 1 }),
     ]);
   } catch (err) {
     console.warn("Non-fatal warning while creating MongoDB indexes:", err);
@@ -135,6 +246,34 @@ async function autoSeed() {
   if (!collections) return;
 
   try {
+    const orgCount = await collections.organizations.countDocuments();
+    if (orgCount === 0) {
+      await collections.organizations.insertOne({
+        _id: "00000000-0000-0000-0000-000000000001",
+        id: "00000000-0000-0000-0000-000000000001",
+        name: "Sentinel Corporation",
+        slug: "sentinel-corp",
+        plan: "enterprise",
+        settings: { auto_hold_threshold: 80, containment_channels: ["slack", "webhook"] },
+        created_at: new Date().toISOString(),
+      });
+      console.log("🌱 Seeded default organization into MongoDB.");
+    }
+
+    const userCount = await collections.users.countDocuments();
+    if (userCount === 0) {
+      await collections.users.insertOne({
+        _id: "00000000-0000-0000-0000-000000000002",
+        id: "00000000-0000-0000-0000-000000000002",
+        org_id: "00000000-0000-0000-0000-000000000001",
+        email: "security-admin@sentinelmail.io",
+        name: "Security Admin",
+        role: "admin",
+        created_at: new Date().toISOString(),
+      });
+      console.log("🌱 Seeded default admin user into MongoDB.");
+    }
+
     const vendorCount = await collections.vendors.countDocuments();
     if (vendorCount === 0) {
       const vendorDocs = seedVendors.map((v) => ({ ...v, _id: v.id }));
@@ -195,6 +334,11 @@ export async function getNextCaseNumberMongo(): Promise<string> {
 
 /** Close connection when shutting down. */
 export async function closeMongo(): Promise<void> {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempts = 0;
   if (client) {
     await client.close();
     client = null;

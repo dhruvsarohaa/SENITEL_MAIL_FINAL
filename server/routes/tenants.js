@@ -49,7 +49,15 @@ router.post("/api-keys", requireRole(["admin"]), async (req, res) => {
     const { name, role } = req.body;
     if (!name) return res.status(400).json({ message: "API key name is required." });
 
-    const keyResult = generateApiKey(req.tenant.id, name, role || "analyst");
+    const VALID_ROLES = ["admin", "analyst", "auditor"];
+    const targetRole = role || "analyst";
+    if (!VALID_ROLES.includes(targetRole)) {
+      return res.status(400).json({
+        message: `Invalid role. Must be one of: ${VALID_ROLES.join(", ")}`,
+      });
+    }
+
+    const keyResult = await generateApiKey(req.tenant.id, name, targetRole);
     res.status(201).json({
       message: "Store this API key securely. It will not be shown again.",
       apiKey: keyResult.rawKey,
@@ -80,11 +88,20 @@ router.post("/users", requireRole(["admin"]), async (req, res) => {
     if (!email || !name) {
       return res.status(400).json({ message: "Email and name are required." });
     }
+
+    const VALID_ROLES = ["admin", "analyst", "auditor"];
+    const targetRole = role || "analyst";
+    if (!VALID_ROLES.includes(targetRole)) {
+      return res.status(400).json({
+        message: `Invalid role. Must be one of: ${VALID_ROLES.join(", ")}`,
+      });
+    }
+
     const user = await addOrganizationUser({
       orgId: req.tenant.id,
       email,
       name,
-      role: role || "analyst",
+      role: targetRole,
     });
     res.status(201).json(user);
   } catch (err) {

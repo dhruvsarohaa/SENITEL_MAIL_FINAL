@@ -9,13 +9,6 @@ const router = Router();
 /** GET /api/campaigns — List all campaign clusters for current tenant. */
 router.get("/", async (req: any, res: any) => {
   try {
-    if (isMongoActive) {
-      console.warn("⚠️ WARNING: Campaign correlation is not implemented on the MongoDB backend.");
-      res.setHeader(
-        "X-Backend-Limitation",
-        "Campaign correlation is not supported on MongoDB backend.",
-      );
-    }
     const orgId = req.tenant?.id || "00000000-0000-0000-0000-000000000001";
     const query = "SELECT * FROM campaigns WHERE org_id = $1 ORDER BY last_seen DESC";
     const params = [orgId];

@@ -30,6 +30,7 @@ export async function extractAndCorrelate(params: {
   };
   caseId: string;
   caseNumber: string;
+  orgId: string;
   domains: string[];
   urls: string[];
   replyTo: string;
@@ -37,8 +38,17 @@ export async function extractAndCorrelate(params: {
   attachmentHashes: string[];
   relayIps: string[];
 }): Promise<CampaignCorrelationResult> {
-  const { pool, caseId, domains, urls, replyTo, bankAccountLast4, attachmentHashes, relayIps } =
-    params;
+  const {
+    pool,
+    caseId,
+    orgId,
+    domains,
+    urls,
+    replyTo,
+    bankAccountLast4,
+    attachmentHashes,
+    relayIps,
+  } = params;
 
   // 1. Insert IOCs into the indicators table
   const indicators: { type: string; value: string }[] = [];
@@ -78,11 +88,12 @@ export async function extractAndCorrelate(params: {
               ARRAY_AGG(DISTINCT i2.type || ':' || i2.value) AS shared
        FROM indicators i1
        JOIN indicators i2 ON i1.type = i2.type AND i1.value = i2.value AND i1.case_id != i2.case_id
-       WHERE i1.case_id = $1
+       JOIN cases c2 ON i2.case_id = c2.id
+       WHERE i1.case_id = $1 AND c2.org_id = $2
        GROUP BY i2.case_id
        HAVING COUNT(DISTINCT i2.type) >= 2
        ORDER BY COUNT(DISTINCT i2.type) DESC`,
-      [caseId],
+      [caseId, orgId],
     );
 
     if (matchQuery.rows.length === 0) {
@@ -170,11 +181,12 @@ export async function extractAndCorrelate(params: {
           ? `${sharedDomains[0]} cluster`
           : `Campaign ${campaignId.slice(5)}`;
       await client.query(
-        `INSERT INTO campaigns (id, name, severity, shared_indicators, first_seen, last_seen,
+        `INSERT INTO campaigns (id, org_id, name, severity, shared_indicators, first_seen, last_seen,
            case_ids, case_count, domains, reply_tos, bank_accounts, attachment_hashes, recommended_actions)
-         VALUES ($1, $2, $3, $4, now(), now(), $5, $6, $7, $8, $9, $10, $11)`,
+         VALUES ($1, $2, $3, $4, $5, now(), now(), $6, $7, $8, $9, $10, $11, $12)`,
         [
           campaignId,
+          orgId,
           campaignName,
           clusterSeverity,
           sharedIndicators.map((s: string) => s.split(":").slice(1).join(":")),

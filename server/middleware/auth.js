@@ -1,4 +1,9 @@
-import { validateApiKey, getOrganization, DEFAULT_ORG_ID } from "../services/tenant.js";
+import {
+  validateApiKey,
+  getOrganization,
+  DEFAULT_ORG_ID,
+  resolveUserByEmail,
+} from "../services/tenant.js";
 import pool from "../db/connection.js";
 import { firebaseAuth } from "../services/firebase-admin.js";
 
@@ -172,27 +177,11 @@ export async function tenantAuthMiddleware(req, res, next) {
       decodedToken.email?.trim().toLowerCase() || decodedToken.sub || "dev-analyst@sentinelmail.io";
 
     // ---------------------------------------------------------
-    // 3. Resolve Firebase user against SentinelMail PostgreSQL
+    // 3. Resolve Firebase user against active backend
     // ---------------------------------------------------------
     let user;
     try {
-      const result = await pool.query(
-        `SELECT
-           u.id,
-           u.org_id,
-           u.email,
-           u.name,
-           u.role,
-           o.name AS org_name,
-           o.slug AS org_slug,
-           o.plan AS org_plan
-         FROM users u
-         JOIN organizations o ON o.id = u.org_id
-         WHERE LOWER(u.email) = $1
-         LIMIT 1`,
-        [email],
-      );
-      user = result.rows?.[0];
+      user = await resolveUserByEmail(email);
     } catch {
       // ignore
     }

@@ -15,7 +15,7 @@ import urllib.error
 from pathlib import Path
 
 DEFAULT_API_URL = os.getenv("SENTINEL_API_URL", "http://localhost:3001")
-DEFAULT_API_KEY = os.getenv("SENTINEL_API_KEY", "sm_live_default_sentinel_corp_key_12345")
+DEFAULT_API_KEY = os.getenv("SENTINEL_API_KEY", "")
 DEFAULT_TENANT = os.getenv("SENTINEL_TENANT_ID", "sentinel-corp")
 
 

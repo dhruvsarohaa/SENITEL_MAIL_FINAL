@@ -2,7 +2,6 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
-import { handleLocalApi } from "./lib/local-api.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -49,8 +48,13 @@ export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
       if (new URL(request.url).pathname.startsWith("/api/")) {
+        const parsedUrl = new URL(request.url);
+        const backendUrl = (process.env["BACKEND_URL"] || "http://localhost:3001").replace(
+          /\/$/,
+          "",
+        );
+        const targetUrl = `${backendUrl}${parsedUrl.pathname}${parsedUrl.search}`;
         try {
-          const targetUrl = `http://localhost:3001${new URL(request.url).pathname}${new URL(request.url).search}`;
           const forwardRes = await fetch(targetUrl, {
             method: request.method,
             headers: request.headers,
@@ -59,8 +63,22 @@ export default {
             duplex: "half",
           });
           return forwardRes;
-        } catch {
-          return await handleLocalApi(request);
+        } catch (proxyErr) {
+          console.error(
+            `Express backend unreachable at ${backendUrl}. ` +
+              "Start it with 'npm run server' or use 'npm run dev:full'.",
+            proxyErr,
+          );
+          return new Response(
+            JSON.stringify({
+              message:
+                "API backend is not running. Start the Express server with 'npm run server' or use 'npm run dev:full'.",
+            }),
+            {
+              status: 502,
+              headers: { "content-type": "application/json; charset=utf-8" },
+            },
+          );
         }
       }
       const handler = await getServerEntry();

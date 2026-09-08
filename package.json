@@ -10,10 +10,13 @@
     "db:migrate": "tsx server/db/migrate.ts",
     "build": "vite build",
     "build:dev": "vite build --mode development",
-    "start": "node .output/server/index.mjs",
+    "start": "concurrently -n fe,api -c cyan,green \"npm run start:frontend\" \"npm run start:api\"",
+    "start:frontend": "node .output/server/index.mjs",
+    "start:api": "node --import tsx server/index.ts",
     "preview": "node .output/server/index.mjs",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test": "vitest run"
   },
   "overrides": {
     "rolldown": "1.2.1"
@@ -105,10 +108,12 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
+    "mongodb-memory-server": "^11.2.0",
     "nitro": "3.0.260603-beta",
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "8.1.5"
+    "vite": "8.1.5",
+    "vitest": "^5.0.0"
   }
 }

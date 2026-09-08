@@ -8,11 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import {
-  clearGoogleSession,
-  hasGoogleAuthConfig,
-  type GoogleProfile,
-} from "@/lib/google-auth";
+import { clearGoogleSession, hasGoogleAuthConfig, type GoogleProfile } from "@/lib/google-auth";
 import { firebaseAuth } from "@/lib/firebase";
 
 type AuthContextValue = {
@@ -44,9 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: firebaseUser.uid,
         email: firebaseUser.email,
         name: firebaseUser.displayName || firebaseUser.email,
-        ...(firebaseUser.photoURL
-          ? { picture: firebaseUser.photoURL }
-          : {}),
+        ...(firebaseUser.photoURL ? { picture: firebaseUser.photoURL } : {}),
       });
     });
 
@@ -76,11 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [completeSignIn, isConfigured, signOut, user],
   );
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
@@ -92,9 +82,6 @@ export function useAuth() {
 
   return value;
 }
-
-
-
 
 // import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 // import { clearGoogleSession, hasGoogleAuthConfig, type GoogleProfile } from "@/lib/google-auth";

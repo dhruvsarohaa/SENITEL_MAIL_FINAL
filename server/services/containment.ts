@@ -26,6 +26,7 @@ export async function sendContainmentAlert(params: {
       const res = await fetch(process.env["CONTAINMENT_WEBHOOK_URL"], {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(8_000),
         body: JSON.stringify({
           event: "containment_action",
           case_number: params.caseNumber,
@@ -60,6 +61,7 @@ export async function sendContainmentAlert(params: {
       const res = await fetch(process.env["SLACK_WEBHOOK_URL"], {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(8_000),
         body: JSON.stringify({
           blocks: [
             {
@@ -101,6 +103,7 @@ export async function sendContainmentAlert(params: {
       const res = await fetch(process.env["TEAMS_WEBHOOK_URL"], {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(8_000),
         body: JSON.stringify({
           type: "message",
           attachments: [

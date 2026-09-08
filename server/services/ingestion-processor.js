@@ -100,10 +100,7 @@ export async function processIngestedMessage({
 
   if (
     classResult.final.classification !== kase.threat_class &&
-    !(
-      classResult.final.classification === "benign" &&
-      (isRuleInvoiceThreat || hasFinancialChange)
-    )
+    !(classResult.final.classification === "benign" && (isRuleInvoiceThreat || hasFinancialChange))
   ) {
     kase.threat_class = classResult.final.classification;
   }
@@ -119,6 +116,7 @@ export async function processIngestedMessage({
     bankAccountLast4: kase.evidence.financial.bank_account_last4,
     bodyText: kase.body_preview ?? "",
     sentAt: new Date(),
+    orgId: effectiveTenantId,
   });
 
   if (behaviorResult.signals.length > 0) {

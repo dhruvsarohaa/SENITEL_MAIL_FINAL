@@ -123,7 +123,7 @@ function CaseDetail() {
       a.href = url;
       a.download = `${kase?.case_number ?? caseId}-report.${reportExtension}`;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
       toast.success("Forensic report downloaded");
     } catch (err) {
       toast.error("Report unavailable", {
@@ -508,7 +508,7 @@ function CaseHeader({
           <button
             type="button"
             onClick={() => onAction("hold_payment")}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-destructive hover:bg-destructive/90 px-3.5 py-2 text-xs font-bold text-destructive-foreground shadow-sm transition-all duration-150 hover:-translate-y-0.5 cursor-pointer"
+            className="btn-tactile-destructive inline-flex items-center gap-1.5 rounded-xl bg-destructive hover:bg-destructive/90 px-3.5 py-2 text-xs font-bold text-destructive-foreground shadow-sm cursor-pointer"
           >
             <ShieldAlert className="size-3.5" />
             Hold Payment
@@ -516,7 +516,7 @@ function CaseHeader({
           <button
             type="button"
             onClick={() => onAction("escalate")}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card hover:bg-secondary px-3.5 py-2 text-xs font-semibold text-foreground shadow-xs transition-colors cursor-pointer"
+            className="btn-tactile-ghost inline-flex items-center gap-1.5 rounded-xl border border-border bg-card hover:bg-secondary px-3.5 py-2 text-xs font-semibold text-foreground shadow-xs cursor-pointer"
           >
             <AlertTriangle className="size-3.5 text-warning" />
             Escalate
@@ -524,14 +524,14 @@ function CaseHeader({
           <button
             type="button"
             onClick={() => onAction("confirm_threat")}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card hover:bg-secondary px-3.5 py-2 text-xs font-medium text-foreground transition-colors cursor-pointer"
+            className="btn-tactile-ghost inline-flex items-center gap-1.5 rounded-xl border border-border bg-card hover:bg-secondary px-3.5 py-2 text-xs font-medium text-foreground cursor-pointer"
           >
             Confirm Threat
           </button>
           <button
             type="button"
             onClick={() => onAction("mark_safe")}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card hover:bg-secondary px-3.5 py-2 text-xs font-medium text-foreground transition-colors cursor-pointer"
+            className="btn-tactile-ghost inline-flex items-center gap-1.5 rounded-xl border border-border bg-card hover:bg-secondary px-3.5 py-2 text-xs font-medium text-foreground cursor-pointer"
           >
             <ShieldCheck className="size-3.5 text-safe" />
             Mark Safe
@@ -539,7 +539,7 @@ function CaseHeader({
           <button
             type="button"
             onClick={onDownload}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-secondary hover:bg-secondary/80 px-3.5 py-2 text-xs font-semibold text-foreground transition-colors cursor-pointer"
+            className="btn-tactile-ghost inline-flex items-center gap-1.5 rounded-xl border border-border bg-secondary hover:bg-secondary/80 px-3.5 py-2 text-xs font-semibold text-foreground cursor-pointer"
           >
             <Download className="size-3.5 text-muted-foreground" />
             Report

@@ -145,6 +145,13 @@ router.post("/:caseId/action", async (req: any, res: any) => {
     const { caseId } = req.params;
     const action = req.body as AnalystAction;
 
+    const VALID_ACTIONS = ["hold_payment", "mark_safe", "escalate", "confirm_threat"];
+    if (!action?.type || !VALID_ACTIONS.includes(action.type)) {
+      return res.status(400).json({
+        message: `Invalid action type. Must be one of: ${VALID_ACTIONS.join(", ")}`,
+      });
+    }
+
     const orgId = req.tenant?.id || "00000000-0000-0000-0000-000000000001";
     const query = "SELECT * FROM cases WHERE (id::text = $1 OR case_number = $1) AND org_id = $2";
     const params = [caseId, orgId];

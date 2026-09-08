@@ -13,8 +13,8 @@ import ingestRouter from "./routes/ingest.js";
 
 import { tenantAuthMiddleware } from "./middleware/auth.js";
 
-import { initMongoDb, isMongoActive } from "./db/mongo.js";
-import { initDbPool, isPostgresActive } from "./db/connection.js";
+import { initMongoDb, isMongoActive, closeMongo } from "./db/mongo.js";
+import { initDbPool, isPostgresActive, realPool } from "./db/connection.js";
 
 // const PORT = Number(process.env["API_PORT"] ?? 3001);
 const PORT = Number(process.env["PORT"] ?? process.env["API_PORT"] ?? 3001);
@@ -22,31 +22,17 @@ const PORT = Number(process.env["PORT"] ?? process.env["API_PORT"] ?? 3001);
 async function main() {
   let dbDescription = "Zero-config high-performance MemoryStore";
 
-  const isProd = process.env.NODE_ENV === "production";
   const hasPgConfig = Boolean(process.env["DATABASE_URL"]);
   const hasMongoConfig = Boolean(process.env["MONGODB_URI"] || process.env["MONGODB_URL"]);
 
+  let connectedTier = "none";
+
+  // Tier 1: PostgreSQL (Primary)
   if (hasPgConfig) {
-    // Primary database: PostgreSQL
+    console.log("[DATABASE CASCADE] Attempting Tier 1 (PostgreSQL)...");
     const pgConnected = await initDbPool();
-    if (!pgConnected) {
-      const maskedUrl = process.env["DATABASE_URL"]?.replace(/:[^:@]+@/, ":***@");
-      if (isProd) {
-        console.error(
-          `FATAL: Configured primary PostgreSQL database at ${maskedUrl} is unreachable. Aborting startup.`,
-        );
-        process.exit(1);
-      } else {
-        console.warn("\n" + "=".repeat(72));
-        console.warn("  ⚠️   WARNING: RUNNING ON EPHEMERAL IN-MEMORY STORAGE (MemoryStore)");
-        console.warn("  ------------------------------------------------------------------------");
-        console.warn(`  PostgreSQL database at ${maskedUrl} is unreachable.`);
-        console.warn("  The server has fallen back to zero-config in-memory storage.");
-        console.warn("  ⚠️   DEMO DATA WILL NOT PERSIST ACROSS SERVER RESTARTS!");
-        console.warn("=".repeat(72) + "\n");
-        dbDescription = "⚠️  EPHEMERAL IN-MEMORY STORE (MemoryStore) — NOT PERSISTENT";
-      }
-    } else {
+    if (pgConnected) {
+      connectedTier = "postgresql";
       dbDescription = `PostgreSQL (${process.env["DATABASE_URL"]?.replace(/:[^:@]+@/, ":***@")})`;
       console.log("Running database migrations...");
       try {
@@ -59,32 +45,53 @@ async function main() {
         );
         process.exit(1);
       }
-    }
-  } else if (hasMongoConfig) {
-    // Optional secondary database: MongoDB
-    const mongoConnected = await initMongoDb();
-    const rawUri = (process.env["MONGODB_URI"] || process.env["MONGODB_URL"] || "").replace(
-      /:[^:@]+@/,
-      ":***@",
-    );
-    if (!mongoConnected) {
-      if (isProd) {
-        console.error(
-          `FATAL: Configured MongoDB database at ${rawUri} is unreachable. Aborting startup.`,
-        );
-        process.exit(1);
-      } else {
-        console.warn(
-          `⚠️ [DEV] Configured MongoDB database at ${rawUri} is unreachable. Operating with zero-config MemoryStore.`,
-        );
-      }
     } else {
-      dbDescription = `MongoDB (${rawUri})`;
+      const maskedPgUrl = process.env["DATABASE_URL"]?.replace(/:[^:@]+@/, ":***@");
+      console.warn(
+        `⚠️  [DATABASE CASCADE] PostgreSQL at ${maskedPgUrl} is unreachable. Falling back to MongoDB...`,
+      );
     }
-  } else {
-    console.log(
-      "Running with built-in zero-config database storage (no external database required).",
-    );
+  }
+
+  // Tier 2: MongoDB (Secondary Fallback)
+  if (connectedTier === "none" && hasMongoConfig) {
+    console.log("[DATABASE CASCADE] Attempting Tier 2 (MongoDB)...");
+    const mongoConnected = await initMongoDb();
+    if (mongoConnected) {
+      connectedTier = "mongodb";
+      const rawUri = (process.env["MONGODB_URI"] || process.env["MONGODB_URL"] || "").replace(
+        /:[^:@]+@/,
+        ":***@",
+      );
+      dbDescription = `MongoDB (${rawUri})`;
+    } else {
+      const rawUri = (process.env["MONGODB_URI"] || process.env["MONGODB_URL"] || "").replace(
+        /:[^:@]+@/,
+        ":***@",
+      );
+      console.warn(
+        `⚠️  [DATABASE CASCADE] MongoDB at ${rawUri} is unreachable. Falling back to MemoryStore...`,
+      );
+    }
+  }
+
+  // Tier 3: MemoryStore (Ephemeral Tertiary Fallback)
+  if (connectedTier === "none") {
+    if (process.env["NODE_ENV"] === "production" && (hasPgConfig || hasMongoConfig)) {
+      console.error(
+        "FATAL: Configured database (PostgreSQL/MongoDB) is unreachable in production mode. Refusing to degrade to ephemeral MemoryStore in production.",
+      );
+      process.exit(1);
+    }
+
+    console.warn("\n" + "=".repeat(78));
+    console.warn("  ⚠️   WARNING: OPERATING IN EPHEMERAL IN-MEMORY STORAGE (MemoryStore) FALLBACK");
+    console.warn("  " + "-".repeat(74));
+    console.warn("  Neither PostgreSQL nor MongoDB could be reached.");
+    console.warn("  The server is running on zero-config in-memory storage.");
+    console.warn("  ⚠️   CUSTOMER DATA (CASES, CAMPAIGNS, API KEYS) WILL NOT PERSIST ON RESTART!");
+    console.warn("=".repeat(78) + "\n");
+    dbDescription = "⚠️  EPHEMERAL IN-MEMORY STORE (MemoryStore) — NOT PERSISTENT";
   }
 
   const app = express();
@@ -188,7 +195,14 @@ async function main() {
   const shutdown = async () => {
     console.log("\nShutting down server gracefully...");
     server.close();
-    // Assuming closeMongo() could be called if imported, skipping for safety
+    try {
+      if (realPool) {
+        await realPool.end();
+      }
+      await closeMongo();
+    } catch (err) {
+      console.error("Error during graceful shutdown:", err);
+    }
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);

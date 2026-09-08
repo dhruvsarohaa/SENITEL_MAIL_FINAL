@@ -102,7 +102,7 @@ export function CasePeekDrawer({
       a.href = url;
       a.download = `${kase?.case_number ?? caseId}-report.${reportExtension}`;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
       toast.success("Forensic report downloaded");
     } catch (err) {
       toast.error("Report unavailable", {
