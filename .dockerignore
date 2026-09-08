@@ -1,0 +1,15 @@
+node_modules
+.git
+.github
+.gemini
+dist
+.output
+*.log
+*.tmp
+.env
+.env.local
+scratch
+docs/onboarding
+coverage
+test-report.pdf
+test.eml

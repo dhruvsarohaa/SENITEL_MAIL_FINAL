@@ -1,0 +1,73 @@
+# ==============================================================================
+# SentinelMail Render Blueprint (Infrastructure-as-Code)
+# Deploys Managed PostgreSQL, Backend API Service, and Frontend Web Service
+# ==============================================================================
+
+databases:
+  - name: sentinelmail-db
+    databaseName: sentinelmail
+    user: sentinel
+    plan: standard
+    ipAllowList: [] # Only internal Render services can access
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. SentinelMail Backend API Server
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: sentinelmail-api
+    runtime: node
+    plan: standard
+    region: oregon
+    buildCommand: npm install
+    startCommand: node --import tsx server/index.ts
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sentinelmail-db
+          property: connectionString
+      - key: CORS_ORIGIN
+        fromService:
+          type: web
+          name: sentinelmail-web
+          property: host
+      - key: GEMINI_API_KEY
+        sync: false # Set securely in Render Dashboard
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: IPINFO_TOKEN
+        sync: false
+      - key: M365_CLIENT_STATE
+        generateValue: true # Secure random string
+      - key: PUBSUB_VERIFICATION_TOKEN
+        generateValue: true
+
+  # ----------------------------------------------------------------------------
+  # 2. SentinelMail Frontend SSR UI (TanStack Start / Nitro)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: sentinelmail-web
+    runtime: node
+    plan: standard
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: node .output/server/index.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: VITE_API_BASE_URL
+        fromService:
+          type: web
+          name: sentinelmail-api
+          property: url
+      - key: VITE_DEMO_MODE
+        value: "false"
