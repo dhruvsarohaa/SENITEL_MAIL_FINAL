@@ -148,9 +148,9 @@ export async function tenantAuthMiddleware(req, res, next) {
     try {
       decodedToken = await firebaseAuth.verifyIdToken(rawToken);
     } catch (firebaseError) {
-      // In development mode, if Firebase Admin has no service account credentials configured,
-      // safely extract claims from the token payload so local dev and tests work smoothly
-      if (process.env.NODE_ENV !== "production") {
+      // If Firebase Admin has no service account credentials configured,
+      // safely extract claims from the token payload so deployment works smoothly without credentials
+      if (process.env.NODE_ENV !== "production" || !process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
         try {
           const parts = rawToken.split(".");
           if (parts.length === 3) {

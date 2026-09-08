@@ -39,8 +39,6 @@ services:
         sync: false # Set securely in Render Dashboard
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
-      - key: OPENAI_API_KEY
-        sync: false
       - key: IPINFO_TOKEN
         sync: false
       - key: M365_CLIENT_STATE
@@ -72,3 +70,17 @@ services:
           property: host
       - key: VITE_DEMO_MODE
         value: "false"
+      - key: VITE_GOOGLE_CLIENT_ID
+        value: 201595122013-8ebtblbm36qmsfarjubj7ivjp7p8158b.apps.googleusercontent.com
+      - key: VITE_FIREBASE_API_KEY
+        value: AIzaSyBnTvq6iOxjPB0M8jdzuD6ORLFTdj43W3o
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        value: sentinelmail-c8269.firebaseapp.com
+      - key: VITE_FIREBASE_PROJECT_ID
+        value: sentinelmail-c8269
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        value: sentinelmail-c8269.firebasestorage.app
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        value: "201595122013"
+      - key: VITE_FIREBASE_APP_ID
+        value: 1:201595122013:web:2c38afb5f79a531a29f8b4
