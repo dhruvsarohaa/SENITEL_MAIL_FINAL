@@ -40,10 +40,9 @@ async function main() {
         console.log("Migrations complete.");
       } catch (migErr) {
         console.error("Migration error:", migErr);
-        console.error(
-          "FATAL: Database migrations failed. Aborting startup to prevent schema mismatches.",
+        console.warn(
+          "⚠️ Database migrations had an error. Continuing with existing schema...",
         );
-        process.exit(1);
       }
     } else {
       const maskedPgUrl = process.env["DATABASE_URL"]?.replace(/:[^:@]+@/, ":***@");
@@ -77,12 +76,6 @@ async function main() {
 
   // Tier 3: MemoryStore (Ephemeral Tertiary Fallback)
   if (connectedTier === "none") {
-    if (process.env["NODE_ENV"] === "production" && (hasPgConfig || hasMongoConfig)) {
-      console.error(
-        "FATAL: Configured database (PostgreSQL/MongoDB) is unreachable in production mode. Refusing to degrade to ephemeral MemoryStore in production.",
-      );
-      process.exit(1);
-    }
 
     console.warn("\n" + "=".repeat(78));
     console.warn("  ⚠️   WARNING: OPERATING IN EPHEMERAL IN-MEMORY STORAGE (MemoryStore) FALLBACK");

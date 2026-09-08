@@ -45,38 +45,60 @@ export const memoryStore = new MemoryStore();
  * Check if PostgreSQL is accessible
  */
 export async function initDbPool(): Promise<boolean> {
+  if (isPostgresActive && realPool) {
+    return true;
+  }
   const connStr = process.env["DATABASE_URL"];
   if (!connStr) {
     return false;
   }
 
-  try {
-    const testPool = new Pool({
-      connectionString: connStr,
-      connectionTimeoutMillis: 2000,
-    });
-    testPool.on("error", (err) => {
-      console.error("Unexpected error on idle PostgreSQL client:", err);
-    });
-    const client = await testPool.connect();
-    client.release();
-    realPool = testPool;
-    isPostgresActive = true;
-    console.log("✅ Connected to PostgreSQL database.");
-    return true;
-  } catch (err) {
-    console.warn("\n" + "=".repeat(72));
-    console.warn("  ⚠️   CRITICAL DATABASE WARNING: POSTGRESQL UNREACHABLE");
-    console.warn("  ------------------------------------------------------------------------");
-    console.warn(`  Target: ${connStr.replace(/:[^:@]+@/, ":***@")}`);
-    console.warn(`  Reason: ${err instanceof Error ? err.message : String(err)}`);
-    console.warn("  ACTION: Falling back to EPHEMERAL in-memory MemoryStore.");
-    console.warn("  ⚠️   WARNING: DATA WILL NOT PERSIST ACROSS PROCESS RESTARTS!");
-    console.warn("=".repeat(72) + "\n");
-    isPostgresActive = false;
-    realPool = null;
-    return false;
+  const isRemoteOrRender =
+    connStr.includes("render.com") ||
+    connStr.includes("sslmode=require") ||
+    connStr.includes("amazonaws.com") ||
+    connStr.includes("supabase.co") ||
+    connStr.includes("neon.tech") ||
+    process.env.NODE_ENV === "production";
+
+  const poolConfig: pg.PoolConfig = {
+    connectionString: connStr,
+    connectionTimeoutMillis: 10000,
+    ssl: isRemoteOrRender ? { rejectUnauthorized: false } : undefined,
+  };
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const testPool = new Pool(poolConfig);
+      testPool.on("error", (err) => {
+        console.error("Unexpected error on idle PostgreSQL client:", err);
+      });
+      const client = await testPool.connect();
+      client.release();
+      realPool = testPool;
+      isPostgresActive = true;
+      console.log("✅ Connected to PostgreSQL database.");
+      return true;
+    } catch (err) {
+      console.warn(`[DATABASE] PostgreSQL connection attempt ${attempt}/3 failed:`, (err as any)?.message || err);
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 2000));
+      } else {
+        console.warn("\n" + "=".repeat(72));
+        console.warn("  ⚠️   CRITICAL DATABASE WARNING: POSTGRESQL UNREACHABLE");
+        console.warn("  ------------------------------------------------------------------------");
+        console.warn(`  Target: ${connStr.replace(/:[^:@]+@/, ":***@")}`);
+        console.warn(`  Reason: ${err instanceof Error ? err.message : String(err)}`);
+        console.warn("  ACTION: Falling back to EPHEMERAL in-memory MemoryStore.");
+        console.warn("  ⚠️   WARNING: DATA WILL NOT PERSIST ACROSS PROCESS RESTARTS!");
+        console.warn("=".repeat(72) + "\n");
+        isPostgresActive = false;
+        realPool = null;
+        return false;
+      }
+    }
   }
+  return false;
 }
 
 /** Close PostgreSQL pool safely */
