@@ -18,7 +18,7 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: npm install
+    buildCommand: npm install --include=dev
     startCommand: node --import tsx server/index.ts
     healthCheckPath: /api/health
     envVars:
@@ -31,10 +31,7 @@ services:
           name: sentinelmail-db
           property: connectionString
       - key: CORS_ORIGIN
-        fromService:
-          type: web
-          name: sentinelmail-web
-          property: host
+        value: "*"
       - key: GEMINI_API_KEY
         sync: false # Set securely in Render Dashboard
       - key: GEMINI_MODEL
@@ -54,15 +51,13 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: node .output/server/index.mjs
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
-      - key: NODE_OPTIONS
-        value: "--max-old-space-size=450"
       - key: VITE_API_BASE_URL
         fromService:
           type: web
