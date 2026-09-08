@@ -5,7 +5,7 @@ import pool from "../db/connection.js";
 import { analyzeEml, address, domain } from "../services/eml-parser.js";
 import { compareBehavior } from "../services/behavioral.js";
 import { classifyEmail } from "../services/classifier.js";
-import { fuseScores } from "../services/scoring.js";
+import { fuseScores, calculateShouldHold } from "../services/scoring.js";
 import { extractAndCorrelate } from "../services/campaign.js";
 import type { VendorProfile, Case } from "../types.js";
 
@@ -14,6 +14,20 @@ const router = Router();
 
 // Simple in-memory rate limiter for analyze uploads (10 uploads per minute per IP)
 const analyzeRateLimits = new Map<string, { count: number; resetAt: number }>();
+
+// Cleanup expired rate limit entries every 5 minutes to prevent memory leaks
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [ip, record] of analyzeRateLimits.entries()) {
+      if (now > record.resetAt) {
+        analyzeRateLimits.delete(ip);
+      }
+    }
+  },
+  5 * 60 * 1000,
+).unref();
+
 function rateLimiter(req: any, res: any, next: any) {
   const ip = req.ip || "unknown";
   const now = Date.now();
@@ -45,8 +59,13 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
 
     const vendorId = req.body?.vendor_id as string | undefined;
 
-    // Fetch vendors from DB
-    const vendorsResult = await pool.query<VendorProfile>("SELECT * FROM vendors ORDER BY name");
+    // Fetch vendors from DB scoped to active tenant
+    const orgId = req.tenant?.id;
+    const vendorsResult = orgId
+      ? await pool.query<VendorProfile>("SELECT * FROM vendors WHERE org_id = $1 ORDER BY name", [
+          orgId,
+        ])
+      : await pool.query<VendorProfile>("SELECT * FROM vendors ORDER BY name");
     const vendors = vendorsResult.rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -77,6 +96,8 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
       vendorId: vendorId || undefined,
       caseNumber,
     });
+    const ruleThreatClass = kase.threat_class;
+    const ruleRiskScore = kase.risk_score;
 
     // Find the matched vendor
     const senderAddr = kase.evidence.sender_identity.from_address;
@@ -123,8 +144,20 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
       sentAt: new Date(),
     });
 
-    // Override classification if AI provides a different answer
-    if (classResult.final.classification !== kase.threat_class) {
+    // Override classification if AI provides a different answer, but block downgrade if rules detected a threat
+    const hasFinancialChange =
+      Boolean(kase.evidence.financial.payment_change_requested) ||
+      Boolean(kase.evidence.financial.bank_account_last4) ||
+      kase.evidence.financial.bank_account_known === false;
+    const isRuleInvoiceThreat = ruleThreatClass === "invoice_fraud";
+
+    if (
+      classResult.final.classification !== kase.threat_class &&
+      !(
+        classResult.final.classification === "benign" &&
+        (isRuleInvoiceThreat || hasFinancialChange)
+      )
+    ) {
       kase.threat_class = classResult.final.classification;
     }
 
@@ -208,11 +241,15 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
               ? "low"
               : "safe";
 
-    // Recalculate decision banner
-    const shouldHold =
-      kase.threat_class === "invoice_fraud" &&
-      (kase.evidence.financial.payment_change_requested ||
-        Boolean(kase.evidence.financial.bank_account_last4));
+    // Recalculate decision banner using centralized policy logic
+    const shouldHold = calculateShouldHold({
+      threatClass: kase.threat_class,
+      ruleThreatClass,
+      hasPaymentChange: kase.evidence.financial.payment_change_requested ?? false,
+      hasBankAccount: Boolean(kase.evidence.financial.bank_account_last4),
+      riskScore: kase.risk_score,
+      ruleRiskScore,
+    });
     kase.assigned_action = shouldHold ? "Hold payment" : "Review required";
     kase.decision_banner = shouldHold
       ? "Hold payment recommended — payment-change evidence requires out-of-band verification"
@@ -228,12 +265,12 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
 
     // Step 5: Persist case to PostgreSQL
     await pool.query(
-
       `INSERT INTO cases (id, org_id, case_number, subject, sender, recipients, threat_class, risk_score,
         severity, confidence, decision, assigned_action, decision_banner, vendor_id, vendor_name,
         amount_at_risk, currency, body_preview, evidence, timeline, relay_path,
+        origin_assessment, domain_intelligence,
         raw_eml, eml_sha256)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,$23)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
       [
         kase.id,
         req.tenant.id,
@@ -256,6 +293,8 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
         JSON.stringify(kase.evidence),
         JSON.stringify(kase.timeline),
         JSON.stringify(kase.relay_path),
+        kase.origin_assessment ? JSON.stringify(kase.origin_assessment) : null,
+        kase.domain_intelligence ? JSON.stringify(kase.domain_intelligence) : null,
         emlBytes,
         emlHash,
       ],
@@ -266,6 +305,7 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
       pool,
       caseId: kase.id,
       caseNumber: kase.case_number,
+      orgId: req.tenant.id,
       domains: kase.evidence.technical.domains,
       urls: kase.evidence.technical.urls,
       replyTo: kase.evidence.sender_identity.reply_to ?? "",
@@ -289,15 +329,43 @@ router.post("/", rateLimiter, upload.single("file"), async (req: any, res: any) 
       });
       kase.risk_score = refused.finalScore;
       kase.confidence = refused.finalConfidence;
+      kase.severity =
+        refused.finalScore >= 80
+          ? "critical"
+          : refused.finalScore >= 60
+            ? "high"
+            : refused.finalScore >= 35
+              ? "medium"
+              : refused.finalScore > 0
+                ? "low"
+                : "safe";
+
+      const campaignShouldHold = calculateShouldHold({
+        threatClass: kase.threat_class,
+        ruleThreatClass,
+        hasPaymentChange: kase.evidence.financial.payment_change_requested ?? false,
+        hasBankAccount: Boolean(kase.evidence.financial.bank_account_last4),
+        riskScore: kase.risk_score,
+        ruleRiskScore,
+      });
+      kase.assigned_action = campaignShouldHold ? "Hold payment" : "Review required";
+      kase.decision_banner = campaignShouldHold
+        ? "Hold payment recommended — payment-change evidence requires out-of-band verification"
+        : kase.severity === "safe"
+          ? "No high-risk indicators found in the uploaded email"
+          : "Review required — investigate the evidence before acting";
 
       // Update the case in DB with campaign data and re-fused score
       await pool.query(
-        `UPDATE cases SET campaign_id = $1, campaign_graph = $2, risk_score = $3, confidence = $4, updated_at = now() WHERE id = $5`,
+        `UPDATE cases SET campaign_id = $1, campaign_graph = $2, risk_score = $3, confidence = $4, severity = $5, assigned_action = $6, decision_banner = $7, updated_at = now() WHERE id = $8`,
         [
           campaignResult.campaignId,
           JSON.stringify(campaignResult.campaignGraph),
           refused.finalScore,
           refused.finalConfidence,
+          kase.severity,
+          kase.assigned_action,
+          kase.decision_banner,
           kase.id,
         ],
       );

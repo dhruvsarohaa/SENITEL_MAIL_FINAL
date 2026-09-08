@@ -23,14 +23,18 @@ export class MemoryStore {
   }
 
   seedDefaults() {
+    const DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000001";
     for (const v of seedVendors) {
-      this.vendors.set(v.id, v);
+      this.vendors.set(v.id, { ...v, org_id: (v as any).org_id || DEFAULT_ORG_ID } as any);
     }
     for (const c of seedCases) {
-      this.cases.set(c.id, c);
+      this.cases.set(c.id, { ...c, org_id: (c as any).org_id || DEFAULT_ORG_ID } as any);
     }
     for (const camp of seedCampaigns) {
-      this.campaigns.set(camp.id, camp);
+      this.campaigns.set(camp.id, {
+        ...camp,
+        org_id: (camp as any).org_id || DEFAULT_ORG_ID,
+      } as any);
     }
   }
 }
@@ -49,7 +53,10 @@ export async function initDbPool(): Promise<boolean> {
   try {
     const testPool = new Pool({
       connectionString: connStr,
-      connectionTimeoutMillis: 1500,
+      connectionTimeoutMillis: 2000,
+    });
+    testPool.on("error", (err) => {
+      console.error("Unexpected error on idle PostgreSQL client:", err);
     });
     const client = await testPool.connect();
     client.release();
@@ -58,39 +65,52 @@ export async function initDbPool(): Promise<boolean> {
     console.log("✅ Connected to PostgreSQL database.");
     return true;
   } catch (err) {
+    console.warn(
+      `⚠️ PostgreSQL is not reachable at ${connStr.replace(/:[^:@]+@/, ":***@")} (${err instanceof Error ? err.message : String(err)})`,
+    );
     isPostgresActive = false;
+    realPool = null;
     return false;
   }
 }
 
 /**
  * Universal query wrapper that executes against:
- * 1. MongoDB (when MONGODB_URI is configured and active)
- * 2. PostgreSQL (when DATABASE_URL is configured and active)
- * 3. MemoryStore (in-memory zero-dependency fallback)
+ * 1. PostgreSQL (when DATABASE_URL is configured and active - PRIMARY)
+ * 2. MongoDB (when MONGODB_URI is configured and active - SECONDARY)
+ * 3. MemoryStore (in-memory zero-dependency fallback for local development)
  */
 export async function query<T = any>(text: string, params?: any[]): Promise<{ rows: T[] }> {
-  // 1. PostgreSQL path
+  const isProd = process.env.NODE_ENV === "production";
+  const hasPgConfig = Boolean(process.env["DATABASE_URL"]);
+
+  // 1. PostgreSQL path (Primary)
   if (isPostgresActive && realPool) {
-    return (await realPool.query(text, params)) as unknown as { rows: T[] };
+    try {
+      return (await realPool.query(text, params)) as unknown as { rows: T[] };
+    } catch (err) {
+      if (isProd) {
+        console.error("CRITICAL: PostgreSQL query failed in production:", err);
+        throw err;
+      }
+      console.warn("⚠️ PostgreSQL query failed, falling back to local MemoryStore:", err);
+    }
+  } else if (hasPgConfig && isProd) {
+    throw new Error("503: Primary database is unreachable in production mode.");
   }
 
-  // 2. MongoDB path
+  // 2. MongoDB path (Secondary)
   if (isMongoActive) {
     const cols = getCollections();
     if (cols) {
-      try {
-        const mongoRows = await executeMongoQuery<T>(cols, text.trim(), params);
-        if (mongoRows !== null) {
-          return { rows: mongoRows };
-        }
-      } catch (err) {
-        console.error("MongoDB query execution error:", err);
+      const mongoRows = await executeMongoQuery<T>(cols, text.trim(), params);
+      if (mongoRows !== null) {
+        return { rows: mongoRows };
       }
     }
   }
 
-  // 3. In-memory fallback queries
+  // 3. In-memory fallback queries (Local dev only)
   const sql = text.trim();
 
   // Next sequence for case_number
@@ -107,9 +127,21 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
       vendors = vendors.filter((v) =>
         v.trusted_domains.some((d) => d.toLowerCase() === targetDomain),
       );
+    } else if (sql.includes("WHERE id = $1 AND org_id = $2")) {
+      const vendorId = params?.[0];
+      const orgId = params?.[1];
+      vendors = vendors.filter(
+        (v: any) =>
+          v.id === vendorId && (v.org_id || "00000000-0000-0000-0000-000000000001") === orgId,
+      );
     } else if (sql.includes("WHERE id = $1")) {
       const vendorId = params?.[0];
       vendors = vendors.filter((v) => v.id === vendorId);
+    } else if (sql.includes("WHERE org_id = $1")) {
+      const orgId = params?.[0];
+      vendors = vendors.filter(
+        (v: any) => (v.org_id || "00000000-0000-0000-0000-000000000001") === orgId,
+      );
     }
     if (sql.includes("ORDER BY name")) {
       vendors.sort((a, b) => a.name.localeCompare(b.name));
@@ -120,8 +152,14 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
   // Insert Vendor
   if (sql.startsWith("INSERT INTO vendors")) {
     if (params) {
-      const [name, trusted_domains, trusted_contacts, approved_bank_suffixes, normal_recipients] =
-        params;
+      const [
+        name,
+        trusted_domains,
+        trusted_contacts,
+        approved_bank_suffixes,
+        normal_recipients,
+        org_id,
+      ] = params;
       const id = `v-${Date.now()}`;
       const newVendor: VendorProfile = {
         id,
@@ -134,6 +172,7 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
         relationship_since: new Date().toISOString(),
         anomalies: [],
       };
+      (newVendor as any).org_id = org_id || "00000000-0000-0000-0000-000000000001";
       memoryStore.vendors.set(id, newVendor);
       return { rows: [newVendor] as unknown as T[] };
     }
@@ -143,9 +182,13 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
   // Update Vendor
   if (sql.startsWith("UPDATE vendors SET")) {
     if (params) {
-      const vendorId = params[params.length - 1];
+      const vendorId = params[5] ?? params[params.length - 1];
+      const orgId = sql.includes("org_id = $7") ? params[6] : undefined;
       const vendor = memoryStore.vendors.get(vendorId);
       if (vendor) {
+        if (orgId && (vendor as any).org_id && (vendor as any).org_id !== orgId) {
+          return { rows: [] };
+        }
         if (sql.includes("last_interaction = now()")) {
           vendor.last_interaction = new Date().toISOString();
         }
@@ -165,44 +208,89 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
     return { rows: [] };
   }
 
+  // Delete Vendor
+  if (sql.startsWith("DELETE FROM vendors")) {
+    if (params) {
+      const vendorId = params[0];
+      const orgId = params[1];
+      const vendor = memoryStore.vendors.get(vendorId);
+      if (vendor) {
+        if (orgId && (vendor as any).org_id && (vendor as any).org_id !== orgId) {
+          return { rows: [] };
+        }
+        memoryStore.vendors.delete(vendorId);
+        return { rows: [{ id: vendorId }] as unknown as T[] };
+      }
+    }
+    return { rows: [] };
+  }
+
   // Insert case
   if (sql.startsWith("INSERT INTO cases")) {
     if (params) {
-      const [
-        id,
-        case_number,
-        subject,
-        sender,
-        recipients,
-        threat_class,
-        risk_score,
-        severity,
-        confidence,
-        decision,
-        assigned_action,
-        decision_banner,
-        vendor_id,
-        vendor_name,
-        amount_at_risk,
-        currency,
-        body_preview,
-        evidenceJson,
-        timelineJson,
-        relayPathJson,
-        raw_eml,
-        eml_sha256,
-      ] = params;
+      const colMatch = sql.match(/INSERT INTO cases\s*\(([^)]+)\)/i);
+      const pMap: Record<string, any> = {};
+      if (colMatch && colMatch[1]) {
+        const cols = colMatch[1].split(",").map((c) => c.trim().toLowerCase());
+        cols.forEach((col, idx) => {
+          pMap[col] = params[idx];
+        });
+      }
+
+      const id = pMap.id ?? params[0];
+      const case_number = pMap.case_number ?? params[1];
+      const subject = pMap.subject ?? params[2];
+      const sender = pMap.sender ?? params[3];
+      const recipients = pMap.recipients ?? params[4];
+      const threat_class = pMap.threat_class ?? params[5];
+      const risk_score = pMap.risk_score ?? params[6];
+      const severity = pMap.severity ?? params[7];
+      const confidence = pMap.confidence ?? params[8];
+      const decision = pMap.decision ?? params[9];
+      const assigned_action = pMap.assigned_action ?? params[10];
+      const decision_banner = pMap.decision_banner ?? params[11];
+      const vendor_id = pMap.vendor_id ?? params[12];
+      const vendor_name = pMap.vendor_name ?? params[13];
+      const amount_at_risk = pMap.amount_at_risk ?? params[14];
+      const currency = pMap.currency ?? params[15];
+      const body_preview = pMap.body_preview ?? params[16];
+      const evidenceJson = pMap.evidence ?? params[17];
+      const timelineJson = pMap.timeline ?? params[18];
+      const relayPathJson = pMap.relay_path ?? params[19];
+      const raw_eml = pMap.raw_eml ?? params[20];
+      const eml_sha256 = pMap.eml_sha256 ?? params[21];
+
+      const org_id =
+        pMap.org_id ??
+        (colMatch && colMatch[1] && colMatch[1].includes("org_id")
+          ? params[
+              colMatch[1]
+                .split(",")
+                .map((c) => c.trim().toLowerCase())
+                .indexOf("org_id")
+            ]
+          : undefined) ??
+        "00000000-0000-0000-0000-000000000001";
+
+      const safeParse = (val: any, fallback: any) => {
+        if (typeof val !== "string") return val ?? fallback;
+        try {
+          return JSON.parse(val);
+        } catch {
+          return fallback;
+        }
+      };
 
       const kase: Case = {
         id,
         case_number,
         subject,
         sender,
-        recipients,
+        recipients: recipients ?? [],
         threat_class,
-        risk_score,
+        risk_score: Number(risk_score) || 0,
         severity,
-        confidence,
+        confidence: Number(confidence) || 0.5,
         decision,
         assigned_action,
         decision_banner,
@@ -210,12 +298,15 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
         amount_at_risk: amount_at_risk ? Number(amount_at_risk) : undefined,
         currency,
         body_preview,
-        evidence: typeof evidenceJson === "string" ? JSON.parse(evidenceJson) : evidenceJson,
-        timeline: typeof timelineJson === "string" ? JSON.parse(timelineJson) : timelineJson,
-        relay_path: typeof relayPathJson === "string" ? JSON.parse(relayPathJson) : relayPathJson,
+        evidence: safeParse(evidenceJson, {}),
+        timeline: safeParse(timelineJson, []),
+        relay_path: safeParse(relayPathJson, []),
+        origin_assessment: safeParse(pMap.origin_assessment, undefined),
+        domain_intelligence: safeParse(pMap.domain_intelligence, undefined),
         created_at: new Date().toISOString(),
         actions: [],
       };
+      (kase as any).org_id = org_id;
       memoryStore.cases.set(id, kase);
     }
     return { rows: [] };
@@ -225,9 +316,15 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
   if (
     sql.includes("FROM cases") &&
     sql.includes("ORDER BY created_at DESC") &&
-    !sql.includes("WHERE")
+    !sql.includes("vendor_id = $1") &&
+    !sql.includes("case_number = ANY($1)")
   ) {
-    const summaries: CaseSummary[] = Array.from(memoryStore.cases.values())
+    const orgId = sql.includes("org_id = $1") ? params?.[0] : undefined;
+    const allCases = Array.from(memoryStore.cases.values());
+    const filtered = orgId
+      ? allCases.filter((c: any) => (c.org_id || "00000000-0000-0000-0000-000000000001") === orgId)
+      : allCases;
+    const summaries: CaseSummary[] = filtered
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .map((c) => ({
         id: c.id,
@@ -252,11 +349,14 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
   if (
     sql.includes("FROM cases") &&
     sql.includes("WHERE") &&
-    (sql.includes("c.id = $1") || sql.includes("case_number = $1") || sql.includes("id = $1"))
+    (sql.includes("c.id") || sql.includes("case_number") || sql.includes("id ="))
   ) {
     const idOrNum = params?.[0];
+    const orgId = sql.includes("org_id = $2") ? params?.[1] : undefined;
     const found = Array.from(memoryStore.cases.values()).find(
-      (c) => c.id === idOrNum || c.case_number === idOrNum,
+      (c: any) =>
+        (c.id === idOrNum || c.case_number === idOrNum) &&
+        (!orgId || (c.org_id || "00000000-0000-0000-0000-000000000001") === orgId),
     );
     if (found) {
       return {
@@ -303,7 +403,7 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
     return { rows: [] };
   }
 
-  // Update case decision and triage_minutes
+  // Update case decision, triage_minutes, or campaign re-fusion
   if (sql.startsWith("UPDATE cases SET")) {
     if (params) {
       const id = params[params.length - 1];
@@ -311,30 +411,62 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
         memoryStore.cases.get(id) ||
         Array.from(memoryStore.cases.values()).find((c) => c.case_number === id);
       if (kase) {
-        if (params[0]) kase.decision = params[0];
-        if (typeof params[1] === "number") kase.triage_minutes = params[1];
+        if (sql.includes("campaign_id = $1, campaign_graph = $2")) {
+          (kase as any).campaign_id = params[0];
+          (kase as any).campaign_graph =
+            typeof params[1] === "string" ? JSON.parse(params[1]) : params[1];
+          (kase as any).risk_score = params[2];
+          (kase as any).confidence = params[3];
+          if (params.length >= 8) {
+            (kase as any).severity = params[4];
+            (kase as any).assigned_action = params[5];
+            (kase as any).decision_banner = params[6];
+          }
+        } else if (sql.includes("decision = $1")) {
+          if (params[0]) kase.decision = params[0];
+          if (typeof params[1] === "number") kase.triage_minutes = params[1];
+        }
       }
     }
     return { rows: [] };
   }
 
-  // Campaigns list
-  if (sql.startsWith("SELECT * FROM campaigns")) {
-    return { rows: Array.from(memoryStore.campaigns.values()) as unknown as T[] };
+  // Single campaign
+  if (sql.includes("FROM campaigns") && sql.includes("WHERE id = $1")) {
+    const campId = params?.[0];
+    const orgId = sql.includes("org_id = $2") ? params?.[1] : undefined;
+    const camp = memoryStore.campaigns.get(campId);
+    if (camp) {
+      if (orgId && (camp as any).org_id && (camp as any).org_id !== orgId) {
+        return { rows: [] };
+      }
+      return { rows: [camp] as unknown as T[] };
+    }
+    return { rows: [] };
   }
 
-  // Single campaign
-  if (sql.includes("FROM campaigns WHERE id = $1")) {
-    const campId = params?.[0];
-    const camp = memoryStore.campaigns.get(campId);
-    return { rows: camp ? ([camp] as unknown as T[]) : [] };
+  // Campaigns list
+  if (sql.includes("FROM campaigns")) {
+    let campaigns = Array.from(memoryStore.campaigns.values());
+    if (sql.includes("WHERE org_id = $1")) {
+      const orgId = params?.[0];
+      campaigns = campaigns.filter(
+        (c: any) => (c.org_id || "00000000-0000-0000-0000-000000000001") === orgId,
+      );
+    }
+    return { rows: campaigns as unknown as T[] };
   }
 
   // Multi cases selection (campaigns array)
   if (sql.includes("FROM cases") && sql.includes("WHERE case_number = ANY($1)")) {
     const caseNumbers = (params?.[0] as string[]) || [];
+    const orgId = sql.includes("org_id = $2") ? params?.[1] : undefined;
     const foundCases = Array.from(memoryStore.cases.values())
-      .filter((c) => caseNumbers.includes(c.case_number) || caseNumbers.includes(c.id))
+      .filter(
+        (c: any) =>
+          (caseNumbers.includes(c.case_number) || caseNumbers.includes(c.id)) &&
+          (!orgId || (c.org_id || "00000000-0000-0000-0000-000000000001") === orgId),
+      )
       .map((c) => ({
         id: c.id,
         case_number: c.case_number,
@@ -370,6 +502,7 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
   // Indicator correlation (self join emulation)
   if (sql.includes("FROM indicators i1") && sql.includes("JOIN indicators i2")) {
     const currentCaseId = params?.[0];
+    const targetOrgId = params?.[1];
     const currentIndicators = memoryStore.indicators.filter((i) => i.case_id === currentCaseId);
     if (currentIndicators.length === 0) return { rows: [] };
 
@@ -379,6 +512,12 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
         (i) => i.type === ind.type && i.value === ind.value && i.case_id !== currentCaseId,
       );
       for (const m of matches) {
+        if (targetOrgId) {
+          const otherCase = memoryStore.cases.get(m.case_id);
+          if (otherCase && (otherCase as any).org_id && (otherCase as any).org_id !== targetOrgId) {
+            continue;
+          }
+        }
         if (!otherCaseMatches.has(m.case_id)) otherCaseMatches.set(m.case_id, new Set());
         otherCaseMatches.get(m.case_id)!.add(`${m.type}:${m.value}`);
       }
@@ -420,8 +559,12 @@ async function executeMongoQuery<T>(
     if (sql.includes("$1 = ANY(trusted_domains)") || sql.includes("trusted_domains @>")) {
       const targetDomain = params?.[0]?.toLowerCase();
       filter = { trusted_domains: targetDomain };
+    } else if (sql.includes("WHERE id = $1 AND org_id = $2")) {
+      filter = { id: params?.[0], org_id: params?.[1] };
     } else if (sql.includes("WHERE id = $1")) {
       filter = { id: params?.[0] };
+    } else if (sql.includes("WHERE org_id = $1")) {
+      filter = { org_id: params?.[0] };
     }
 
     let cursor = cols.vendors.find(filter);
@@ -446,8 +589,14 @@ async function executeMongoQuery<T>(
   // 3. Insert vendor
   if (sql.startsWith("INSERT INTO vendors")) {
     if (params) {
-      const [name, trusted_domains, trusted_contacts, approved_bank_suffixes, normal_recipients] =
-        params;
+      const [
+        name,
+        trusted_domains,
+        trusted_contacts,
+        approved_bank_suffixes,
+        normal_recipients,
+        org_id,
+      ] = params;
       const id = `v-${Date.now()}`;
       const newVendor: VendorProfile = {
         id,
@@ -460,7 +609,11 @@ async function executeMongoQuery<T>(
         relationship_since: new Date().toISOString(),
         anomalies: [],
       };
-      await cols.vendors.insertOne({ ...newVendor, _id: id } as any);
+      await cols.vendors.insertOne({
+        ...newVendor,
+        _id: id,
+        org_id: org_id || "00000000-0000-0000-0000-000000000001",
+      } as any);
       return [newVendor] as unknown as T[];
     }
     return [];
@@ -469,7 +622,8 @@ async function executeMongoQuery<T>(
   // 4. Update vendor
   if (sql.startsWith("UPDATE vendors SET")) {
     if (params) {
-      const vendorId = params[params.length - 1];
+      const vendorId = params[5] ?? params[params.length - 1];
+      const orgId = sql.includes("org_id = $7") ? params[6] : undefined;
       const updateDoc: any = { updated_at: new Date() };
 
       if (sql.includes("last_interaction = now()")) {
@@ -486,53 +640,89 @@ async function executeMongoQuery<T>(
         if (params[3]) updateDoc.approved_bank_suffixes = params[3];
         if (params[4]) updateDoc.normal_recipients = params[4];
       }
-
-      await cols.vendors.updateOne({ id: vendorId }, { $set: updateDoc });
-      const updated = await cols.vendors.findOne({ id: vendorId });
-      return updated ? ([updated] as unknown as T[]) : [];
+      const filter: any = { $or: [{ id: vendorId }, { _id: vendorId }] };
+      if (orgId) {
+        filter.org_id = orgId;
+      }
+      const res = await cols.vendors.findOneAndUpdate(
+        filter,
+        { $set: updateDoc },
+        { returnDocument: "after" },
+      );
+      return res ? ([res] as unknown as T[]) : [];
     }
     return [];
+  }
+
+  // Delete vendor
+  if (sql.startsWith("DELETE FROM vendors")) {
+    const vendorId = params?.[0];
+    const orgId = params?.[1];
+    const filter: any = { $or: [{ id: vendorId }, { _id: vendorId }] };
+    if (orgId) {
+      filter.org_id = orgId;
+    }
+    const res = await cols.vendors.deleteOne(filter);
+    return res.deletedCount > 0 ? ([{ id: vendorId }] as unknown as T[]) : [];
   }
 
   // 5. Insert case
   if (sql.startsWith("INSERT INTO cases")) {
     if (params) {
-      const [
-        id,
-        case_number,
-        subject,
-        sender,
-        recipients,
-        threat_class,
-        risk_score,
-        severity,
-        confidence,
-        decision,
-        assigned_action,
-        decision_banner,
-        vendor_id,
-        vendor_name,
-        amount_at_risk,
-        currency,
-        body_preview,
-        evidenceJson,
-        timelineJson,
-        relayPathJson,
-        raw_eml,
-        eml_sha256,
-      ] = params;
+      const colMatch = sql.match(/INSERT INTO cases\s*\(([^)]+)\)/i);
+      const pMap: Record<string, any> = {};
+      if (colMatch && colMatch[1]) {
+        const cols = colMatch[1].split(",").map((c) => c.trim().toLowerCase());
+        cols.forEach((col, idx) => {
+          pMap[col] = params[idx];
+        });
+      }
+
+      const id = pMap.id ?? params[0];
+      const case_number = pMap.case_number ?? params[1];
+      const org_id = pMap.org_id;
+      const subject = pMap.subject ?? params[2];
+      const sender = pMap.sender ?? params[3];
+      const recipients = pMap.recipients ?? params[4];
+      const threat_class = pMap.threat_class ?? params[5];
+      const risk_score = pMap.risk_score ?? params[6];
+      const severity = pMap.severity ?? params[7];
+      const confidence = pMap.confidence ?? params[8];
+      const decision = pMap.decision ?? params[9];
+      const assigned_action = pMap.assigned_action ?? params[10];
+      const decision_banner = pMap.decision_banner ?? params[11];
+      const vendor_id = pMap.vendor_id ?? params[12];
+      const vendor_name = pMap.vendor_name ?? params[13];
+      const amount_at_risk = pMap.amount_at_risk ?? params[14];
+      const currency = pMap.currency ?? params[15];
+      const body_preview = pMap.body_preview ?? params[16];
+      const evidenceJson = pMap.evidence ?? params[17];
+      const timelineJson = pMap.timeline ?? params[18];
+      const relayPathJson = pMap.relay_path ?? params[19];
+      const raw_eml = pMap.raw_eml ?? params[20];
+      const eml_sha256 = pMap.eml_sha256 ?? params[21];
+
+      const safeParse = (val: any, fallback: any) => {
+        if (typeof val !== "string") return val ?? fallback;
+        try {
+          return JSON.parse(val);
+        } catch {
+          return fallback;
+        }
+      };
 
       const caseDoc: any = {
         _id: id,
         id,
+        org_id,
         case_number,
         subject,
         sender,
         recipients: recipients ?? [],
         threat_class,
-        risk_score: Number(risk_score),
+        risk_score: Number(risk_score) || 0,
         severity,
-        confidence: Number(confidence),
+        confidence: Number(confidence) || 0.5,
         decision: decision ?? "pending",
         assigned_action,
         decision_banner,
@@ -542,9 +732,11 @@ async function executeMongoQuery<T>(
         amount_at_risk: amount_at_risk ? Number(amount_at_risk) : undefined,
         currency,
         body_preview,
-        evidence: typeof evidenceJson === "string" ? JSON.parse(evidenceJson) : evidenceJson,
-        timeline: typeof timelineJson === "string" ? JSON.parse(timelineJson) : timelineJson,
-        relay_path: typeof relayPathJson === "string" ? JSON.parse(relayPathJson) : relayPathJson,
+        evidence: safeParse(evidenceJson, {}),
+        timeline: safeParse(timelineJson, []),
+        relay_path: safeParse(relayPathJson, []),
+        origin_assessment: safeParse(pMap.origin_assessment, undefined),
+        domain_intelligence: safeParse(pMap.domain_intelligence, undefined),
         raw_eml,
         eml_sha256,
         created_at: new Date().toISOString(),
@@ -560,9 +752,12 @@ async function executeMongoQuery<T>(
   if (
     sql.includes("FROM cases") &&
     sql.includes("ORDER BY created_at DESC") &&
-    !sql.includes("WHERE")
+    !sql.includes("vendor_id = $1") &&
+    !sql.includes("case_number = ANY($1)")
   ) {
-    const docs = await cols.cases.find({}).sort({ created_at: -1 }).toArray();
+    const orgId = sql.includes("org_id = $1") ? params?.[0] : undefined;
+    const filter = orgId ? { org_id: orgId } : {};
+    const docs = await cols.cases.find(filter).sort({ created_at: -1 }).toArray();
     const summaries: CaseSummary[] = docs.map((c) => ({
       id: c.id,
       case_number: c.case_number,
@@ -599,10 +794,12 @@ async function executeMongoQuery<T>(
 
   if (sql.includes("FROM cases WHERE case_number = ANY($1)")) {
     const caseNumbers: string[] = params?.[0] ?? [];
-    const docs = await cols.cases
-      .find({ case_number: { $in: caseNumbers } })
-      .sort({ created_at: -1 })
-      .toArray();
+    const orgId = sql.includes("org_id = $2") ? params?.[1] : undefined;
+    const filter: any = { case_number: { $in: caseNumbers } };
+    if (orgId) {
+      filter.org_id = orgId;
+    }
+    const docs = await cols.cases.find(filter).sort({ created_at: -1 }).toArray();
     return docs.map((c) => ({
       id: c.id,
       case_number: c.case_number,
@@ -624,12 +821,17 @@ async function executeMongoQuery<T>(
   if (
     sql.includes("FROM cases") &&
     sql.includes("WHERE") &&
-    (sql.includes("c.id = $1") || sql.includes("case_number = $1") || sql.includes("id = $1"))
+    (sql.includes("c.id") || sql.includes("case_number") || sql.includes("id ="))
   ) {
     const idOrNum = params?.[0];
-    const found = await cols.cases.findOne({
+    const orgId = sql.includes("org_id = $2") ? params?.[1] : undefined;
+    const filter: any = {
       $or: [{ id: idOrNum }, { case_number: idOrNum }, { _id: idOrNum }],
-    });
+    };
+    if (orgId) {
+      filter.org_id = orgId;
+    }
+    const found = await cols.cases.findOne(filter);
     if (found) {
       return [
         {
@@ -658,19 +860,23 @@ async function executeMongoQuery<T>(
           },
         );
       } else if (sql.includes("campaign_id = $1, campaign_graph = $2")) {
-        const id = params[4];
+        const id = params[params.length - 1];
         const campaignGraph = typeof params[1] === "string" ? JSON.parse(params[1]) : params[1];
+        const setDoc: Record<string, any> = {
+          campaign_id: params[0],
+          campaign_graph: campaignGraph,
+          risk_score: params[2],
+          confidence: params[3],
+          updated_at: new Date().toISOString(),
+        };
+        if (params.length >= 8) {
+          setDoc.severity = params[4];
+          setDoc.assigned_action = params[5];
+          setDoc.decision_banner = params[6];
+        }
         await cols.cases.updateOne(
-          { _id: id },
-          {
-            $set: {
-              campaign_id: params[0],
-              campaign_graph: campaignGraph,
-              risk_score: params[2],
-              confidence: params[3],
-              updated_at: new Date().toISOString(),
-            },
-          },
+          { $or: [{ id }, { _id: id }, { case_number: id }] },
+          { $set: setDoc },
         );
       } else if (sql.includes("campaign_id = $1, updated_at = now() WHERE id = ANY($2)")) {
         await cols.cases.updateMany(
@@ -720,12 +926,20 @@ async function executeMongoQuery<T>(
 
   // 11. Campaigns
   if (sql.startsWith("SELECT * FROM campaigns")) {
-    const camps = await cols.campaigns.find({}).sort({ last_seen: -1 }).toArray();
+    const filter: any = {};
+    if (sql.includes("WHERE org_id = $1")) {
+      filter.org_id = params?.[0];
+    }
+    const camps = await cols.campaigns.find(filter).sort({ last_seen: -1 }).toArray();
     return camps as unknown as T[];
   }
 
   if (sql.includes("FROM campaigns WHERE id = $1")) {
-    const camp = await cols.campaigns.findOne({ id: params?.[0] });
+    const filter: any = { id: params?.[0] };
+    if (sql.includes("org_id = $2")) {
+      filter.org_id = params?.[1];
+    }
+    const camp = await cols.campaigns.findOne(filter);
     return camp ? ([camp] as unknown as T[]) : [];
   }
 

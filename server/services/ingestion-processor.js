@@ -3,7 +3,7 @@ import pool from "../db/connection.js";
 import { analyzeEml, domain } from "./eml-parser.js";
 import { compareBehavior } from "./behavioral.js";
 import { classifyEmail } from "./classifier.js";
-import { fuseScores } from "./scoring.js";
+import { fuseScores, calculateShouldHold } from "./scoring.js";
 import { extractAndCorrelate } from "./campaign.js";
 import { sendContainmentAlert } from "./containment.js";
 
@@ -20,9 +20,12 @@ export async function processIngestedMessage({
   provider = "m365",
 }) {
   const bytesBuffer = Buffer.isBuffer(rawBytes) ? rawBytes : Buffer.from(rawBytes);
+  const effectiveTenantId = tenantId || "00000000-0000-0000-0000-000000000001";
 
   // 1. Fetch vendor baseline for this tenant
-  const vendorsResult = await pool.query("SELECT * FROM vendors");
+  const vendorsResult = await pool.query("SELECT * FROM vendors WHERE org_id = $1", [
+    effectiveTenantId,
+  ]);
   const vendors = vendorsResult.rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -55,7 +58,10 @@ export async function processIngestedMessage({
     caseNumber,
   });
 
-  kase.org_id = tenantId;
+  const ruleThreatClass = kase.threat_class;
+  const ruleRiskScore = kase.risk_score;
+
+  kase.org_id = effectiveTenantId;
   kase.connector_id = connectorId;
 
   // 4. Auto-match vendor
@@ -85,7 +91,20 @@ export async function processIngestedMessage({
     hasNewBankAccount: kase.evidence.financial.bank_account_known === false,
   });
 
-  if (classResult.final.classification !== kase.threat_class) {
+  // Override classification if AI provides a different answer, but block downgrade if rules detected a threat
+  const hasFinancialChange =
+    Boolean(kase.evidence.financial.payment_change_requested) ||
+    Boolean(kase.evidence.financial.bank_account_last4) ||
+    kase.evidence.financial.bank_account_known === false;
+  const isRuleInvoiceThreat = ruleThreatClass === "invoice_fraud";
+
+  if (
+    classResult.final.classification !== kase.threat_class &&
+    !(
+      classResult.final.classification === "benign" &&
+      (isRuleInvoiceThreat || hasFinancialChange)
+    )
+  ) {
     kase.threat_class = classResult.final.classification;
   }
 
@@ -146,11 +165,14 @@ export async function processIngestedMessage({
           : "safe";
 
   // 8. Automated Enterprise Policy Enforcement (Autonomous Containment)
-  const isInvoiceThreat = kase.threat_class === "invoice_fraud";
-  const hasPaymentChange = Boolean(
-    kase.evidence.financial.payment_change_requested || kase.evidence.financial.bank_account_last4,
-  );
-  const shouldAutoHold = (isInvoiceThreat && hasPaymentChange) || kase.risk_score >= 85;
+  const shouldAutoHold = calculateShouldHold({
+    threatClass: kase.threat_class,
+    ruleThreatClass,
+    hasPaymentChange: kase.evidence.financial.payment_change_requested ?? false,
+    hasBankAccount: Boolean(kase.evidence.financial.bank_account_last4),
+    riskScore: kase.risk_score,
+    ruleRiskScore,
+  });
 
   let autoActionTaken = false;
   if (shouldAutoHold) {
@@ -183,8 +205,8 @@ export async function processIngestedMessage({
     `INSERT INTO cases (id, case_number, subject, sender, recipients, threat_class, risk_score,
       severity, confidence, decision, assigned_action, decision_banner, vendor_id, vendor_name,
       amount_at_risk, currency, body_preview, evidence, timeline, relay_path,
-      raw_eml, eml_sha256)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+      raw_eml, eml_sha256, org_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
     [
       kase.id,
       kase.case_number,
@@ -208,6 +230,7 @@ export async function processIngestedMessage({
       JSON.stringify(kase.relay_path),
       bytesBuffer,
       emlHash,
+      effectiveTenantId,
     ],
   );
 
@@ -216,6 +239,7 @@ export async function processIngestedMessage({
     pool,
     caseId: kase.id,
     caseNumber: kase.case_number,
+    orgId: effectiveTenantId,
     domains: kase.evidence.technical.domains,
     urls: kase.evidence.technical.urls,
     replyTo: kase.evidence.sender_identity.reply_to ?? "",
