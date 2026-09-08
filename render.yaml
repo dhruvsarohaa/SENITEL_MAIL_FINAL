@@ -68,6 +68,6 @@ services:
         fromService:
           type: web
           name: sentinelmail-api
-          property: url
+          property: host
       - key: VITE_DEMO_MODE
         value: "false"

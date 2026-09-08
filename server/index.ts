@@ -97,11 +97,19 @@ async function main() {
   const app = express();
 
   // Middleware
-  const allowedOrigins = (
+  const rawOrigins = (
     process.env.CORS_ORIGIN || "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000"
   )
     .split(",")
-    .map((o) => o.trim());
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  const allowedOrigins = rawOrigins.flatMap((o) => {
+    if (o.startsWith("http://") || o.startsWith("https://")) {
+      return [o];
+    }
+    return [`http://${o}`, `https://${o}`, o];
+  });
 
   app.use(
     cors({

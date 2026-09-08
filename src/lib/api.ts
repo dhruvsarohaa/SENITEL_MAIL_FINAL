@@ -9,8 +9,13 @@ import type {
 import { demoCampaigns, demoCaseSummaries, demoCases, demoVendors } from "./demo-data";
 import { firebaseAuth } from "./firebase";
 
-export const API_BASE_URL =
-  (import.meta.env["VITE_API_BASE_URL"] as string | undefined)?.replace(/\/$/, "") ?? "";
+const rawBaseUrl = (import.meta.env["VITE_API_BASE_URL"] as string | undefined)?.trim() ?? "";
+export const API_BASE_URL = rawBaseUrl
+  ? (rawBaseUrl.startsWith("http://") || rawBaseUrl.startsWith("https://")
+      ? rawBaseUrl
+      : `https://${rawBaseUrl}`
+    ).replace(/\/$/, "")
+  : "";
 
 /** Demo fixtures are used ONLY when explicitly enabled with VITE_DEMO_MODE=true. */
 export const DEMO_MODE = String(import.meta.env["VITE_DEMO_MODE"] ?? "").toLowerCase() === "true";
