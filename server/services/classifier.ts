@@ -222,7 +222,7 @@ Return ONLY a valid JSON object matching this schema:
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(10_000),
           body: JSON.stringify({
             contents: [
               {
@@ -243,7 +243,8 @@ Return ONLY a valid JSON object matching this schema:
       );
 
       if (!response.ok) {
-        if (response.status === 404 && modelName !== uniqueModels[uniqueModels.length - 1]) {
+        const isFallbackStatus = [404, 429, 500, 502, 503, 504].includes(response.status);
+        if (isFallbackStatus && modelName !== uniqueModels[uniqueModels.length - 1]) {
           continue; // Try next fallback model
         }
         const errText = await response.text().catch(() => "");
@@ -325,7 +326,7 @@ Return ONLY valid JSON: {"classification":"<one of the five>","confidence":<0.0 
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.1,
