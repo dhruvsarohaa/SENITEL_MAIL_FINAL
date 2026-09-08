@@ -7,8 +7,7 @@ databases:
   - name: sentinelmail-db
     databaseName: sentinelmail
     user: sentinel
-    plan: standard
-    ipAllowList: [] # Only internal Render services can access
+    plan: free
 
 services:
   # ----------------------------------------------------------------------------
@@ -17,7 +16,7 @@ services:
   - type: web
     name: sentinelmail-api
     runtime: node
-    plan: standard
+    plan: free
     region: oregon
     buildCommand: npm install
     startCommand: node --import tsx server/index.ts
@@ -55,7 +54,7 @@ services:
   - type: web
     name: sentinelmail-web
     runtime: node
-    plan: standard
+    plan: free
     region: oregon
     buildCommand: npm install && npm run build
     startCommand: node .output/server/index.mjs
@@ -64,6 +63,8 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=450"
       - key: VITE_API_BASE_URL
         fromService:
           type: web
