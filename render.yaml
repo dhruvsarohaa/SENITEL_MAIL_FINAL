@@ -18,8 +18,8 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: npm install --include=dev
-    startCommand: node --import tsx server/index.ts
+    buildCommand: npm install --include=dev && npx esbuild server/index.ts --bundle --platform=node --target=node20 --outdir=dist/server --format=esm --packages=external && cp -r server/db/migrations dist/server/migrations
+    startCommand: node dist/server/index.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
