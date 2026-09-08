@@ -427,6 +427,9 @@ export async function query<T = any>(text: string, params?: any[]): Promise<{ ro
             (kase as any).assigned_action = params[5];
             (kase as any).decision_banner = params[6];
           }
+          if (params.length >= 9) {
+            (kase as any).decision = params[7];
+          }
         }
       } else if (sql.includes("decision = $1")) {
         const id = params.length >= 4 ? params[2] : params[params.length - 1];
@@ -885,6 +888,9 @@ async function executeMongoQuery<T>(
           setDoc.severity = params[4];
           setDoc.assigned_action = params[5];
           setDoc.decision_banner = params[6];
+        }
+        if (params.length >= 9) {
+          setDoc.decision = params[7];
         }
         await cols.cases.updateOne(
           { $or: [{ id }, { _id: id }, { case_number: id }] },

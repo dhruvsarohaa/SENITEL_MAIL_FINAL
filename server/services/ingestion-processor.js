@@ -205,8 +205,9 @@ export async function processIngestedMessage({
     `INSERT INTO cases (id, case_number, subject, sender, recipients, threat_class, risk_score,
       severity, confidence, decision, assigned_action, decision_banner, vendor_id, vendor_name,
       amount_at_risk, currency, body_preview, evidence, timeline, relay_path,
+      origin_assessment, domain_intelligence,
       raw_eml, eml_sha256, org_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
     [
       kase.id,
       kase.case_number,
@@ -228,6 +229,8 @@ export async function processIngestedMessage({
       JSON.stringify(kase.evidence),
       JSON.stringify(kase.timeline),
       JSON.stringify(kase.relay_path),
+      kase.origin_assessment ? JSON.stringify(kase.origin_assessment) : null,
+      kase.domain_intelligence ? JSON.stringify(kase.domain_intelligence) : null,
       bytesBuffer,
       emlHash,
       effectiveTenantId,
@@ -235,7 +238,7 @@ export async function processIngestedMessage({
   );
 
   // 10. Correlate with active campaigns
-  await extractAndCorrelate({
+  const campaignResult = await extractAndCorrelate({
     pool,
     caseId: kase.id,
     caseNumber: kase.case_number,
@@ -246,7 +249,90 @@ export async function processIngestedMessage({
     bankAccountLast4: kase.evidence.financial.bank_account_last4,
     attachmentHashes: kase.evidence.technical.attachments.map((a) => a.sha256).filter(Boolean),
     relayIps: kase.evidence.technical.relay_ips,
-  }).catch((err) => console.error("Campaign correlation error:", err));
+  }).catch((err) => {
+    console.error("Campaign correlation error:", err);
+    return { campaignId: null, matchCount: 0 };
+  });
+
+  if (campaignResult && campaignResult.campaignId) {
+    kase.campaign_id = campaignResult.campaignId;
+    kase.campaign_graph = campaignResult.campaignGraph;
+
+    // Re-fuse score with campaign data
+    const refused = fuseScores({
+      ruleBasedScore: fused.ruleBasedScore,
+      behavioralDelta: fused.behavioralDelta,
+      campaignMatchCount: campaignResult.matchCount,
+      aiAgrees: classResult.aiOverlay?.agrees,
+    });
+    kase.risk_score = refused.finalScore;
+    kase.confidence = refused.finalConfidence;
+    kase.severity =
+      refused.finalScore >= 80
+        ? "critical"
+        : refused.finalScore >= 60
+          ? "high"
+          : refused.finalScore >= 35
+            ? "medium"
+            : refused.finalScore > 0
+              ? "low"
+              : "safe";
+
+    const campaignShouldHold = calculateShouldHold({
+      threatClass: kase.threat_class,
+      ruleThreatClass,
+      hasPaymentChange: kase.evidence.financial.payment_change_requested ?? false,
+      hasBankAccount: Boolean(kase.evidence.financial.bank_account_last4),
+      riskScore: kase.risk_score,
+      ruleRiskScore,
+    });
+
+    if (campaignShouldHold) {
+      kase.decision = "payment_held";
+      kase.assigned_action = "Hold payment";
+      kase.decision_banner = "AUTOMATED CONTAINMENT: Payment hold initiated upon mailbox delivery";
+      autoActionTaken = true;
+
+      // Dispatch containment alert if campaign fusion moved it to hold and alert wasn't already sent
+      if (!shouldAutoHold) {
+        sendContainmentAlert({
+          caseNumber: kase.case_number,
+          subject: kase.subject,
+          sender: kase.sender,
+          riskScore: kase.risk_score,
+          severity: kase.severity,
+          vendor: kase.vendor,
+          amountAtRisk: kase.amount_at_risk,
+          currency: kase.currency,
+          decisionBanner: kase.decision_banner,
+          actionType: "hold_payment",
+          analystNote: `Autonomous containment triggered by campaign correlation (match count: ${campaignResult.matchCount}).`,
+        }).catch((err) => console.error("Automated containment alert failed:", err));
+      }
+    } else {
+      kase.assigned_action = "Review required";
+      kase.decision_banner =
+        kase.severity === "safe"
+          ? "No high-risk indicators found in the ingested email"
+          : "Review required — investigate the evidence before acting";
+    }
+
+    // Update the case in DB with campaign data and re-fused score
+    await pool.query(
+      `UPDATE cases SET campaign_id = $1, campaign_graph = $2, risk_score = $3, confidence = $4, severity = $5, assigned_action = $6, decision_banner = $7, decision = $8, updated_at = now() WHERE id = $9`,
+      [
+        campaignResult.campaignId,
+        JSON.stringify(campaignResult.campaignGraph),
+        refused.finalScore,
+        refused.finalConfidence,
+        kase.severity,
+        kase.assigned_action,
+        kase.decision_banner,
+        kase.decision,
+        kase.id,
+      ],
+    );
+  }
 
   return {
     case_id: kase.id,
